@@ -1,7 +1,6 @@
 package com.example.data.remote
 
 import android.content.Context
-import com.example.R
 import com.example.data.model.AppSettings
 import com.example.data.model.CaisseMovement
 import com.example.data.model.Customer
@@ -31,10 +30,15 @@ import java.util.concurrent.ConcurrentHashMap
 class FirestorePosRepository(private val db: FirebaseFirestore) {
 
     constructor(context: Context) : this(
-        FirebaseFirestore.getInstance(
-            context.applicationContext.getString(R.string.firestore_database_id)
-        )
+        FirebaseFirestore.getInstance(resolveDatabaseId(context.applicationContext))
     )
+
+    companion object {
+        fun resolveDatabaseId(context: Context): String {
+            val resId = context.resources.getIdentifier("firestore_database_id", "string", context.packageName)
+            return if (resId != 0) context.getString(resId) else "(default)"
+        }
+    }
 
     private val createdAtCache = ConcurrentHashMap<String, Timestamp>()
 

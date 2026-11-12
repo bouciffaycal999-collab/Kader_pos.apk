@@ -9,11 +9,11 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.NoCredentialException
-import com.example.R
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
@@ -38,7 +38,27 @@ sealed interface AuthAttemptResult {
 object GoogleAuthManager {
     private const val TAG = "Auth"
 
-    fun authStateFlow(auth: FirebaseAuth = Firebase.auth): Flow<FirebaseUser?> = callbackFlow {
+    fun isFirebaseAvailable(context: Context): Boolean =
+        runCatching { FirebaseApp.getApps(context.applicationContext).isNotEmpty() }.getOrDefault(false)
+
+    private fun safeAuth(context: Context, explicitAuth: FirebaseAuth?): FirebaseAuth? {
+        if (explicitAuth != null) return explicitAuth
+        if (!isFirebaseAvailable(context)) return null
+        return runCatching { Firebase.auth }.getOrNull()
+    }
+
+    private fun resolveServerClientId(context: Context): String? {
+        val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+        if (resId == 0) return null
+        return runCatching { context.getString(resId) }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
+
+    fun authStateFlow(auth: FirebaseAuth?): Flow<FirebaseUser?> = callbackFlow {
+        if (auth == null) {
+            trySend(null)
+            awaitClose { }
+            return@callbackFlow
+        }
         val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
             trySend(firebaseAuth.currentUser)
         }
@@ -49,10 +69,11 @@ object GoogleAuthManager {
     suspend fun attemptSilentSignIn(
         context: Context,
         credentialManager: CredentialManager = CredentialManager.create(context),
-        auth: FirebaseAuth = Firebase.auth
+        auth: FirebaseAuth? = null
     ): AuthAttemptResult {
-        if (auth.currentUser != null) return AuthAttemptResult.Success
-        val serverClientId = context.getString(R.string.default_web_client_id)
+        val firebaseAuth = safeAuth(context, auth) ?: return AuthAttemptResult.NoSavedCredential
+        if (firebaseAuth.currentUser != null) return AuthAttemptResult.Success
+        val serverClientId = resolveServerClientId(context) ?: return AuthAttemptResult.NoSavedCredential
         val googleIdOption = GetGoogleIdOption.Builder()
             .setFilterByAuthorizedAccounts(true)
             .setServerClientId(serverClientId)
@@ -64,7 +85,7 @@ object GoogleAuthManager {
 
         return try {
             val result = credentialManager.getCredential(context = context, request = request)
-            signInWithGoogleCredential(result.credential, auth)
+            signInWithGoogleCredential(result.credential, firebaseAuth)
         } catch (e: CancellationException) {
             throw e
         } catch (_: NoCredentialException) {
@@ -81,9 +102,12 @@ object GoogleAuthManager {
     suspend fun signInInteractive(
         context: Context,
         credentialManager: CredentialManager = CredentialManager.create(context),
-        auth: FirebaseAuth = Firebase.auth
+        auth: FirebaseAuth? = null
     ): AuthAttemptResult {
-        val serverClientId = context.getString(R.string.default_web_client_id)
+        val firebaseAuth = safeAuth(context, auth)
+            ?: return AuthAttemptResult.Error("Cloud Google non configuré dans cette version APK hors-ligne.")
+        val serverClientId = resolveServerClientId(context)
+            ?: return AuthAttemptResult.Error("Cloud Google non configuré dans cette version APK hors-ligne.")
         val signInWithGoogleOption = GetSignInWithGoogleOption.Builder(serverClientId)
             .build()
         val request = GetCredentialRequest.Builder()
@@ -92,7 +116,7 @@ object GoogleAuthManager {
 
         return try {
             val result = credentialManager.getCredential(context = context, request = request)
-            signInWithGoogleCredential(result.credential, auth)
+            signInWithGoogleCredential(result.credential, firebaseAuth)
         } catch (e: CancellationException) {
             throw e
         } catch (e: GetCredentialCancellationException) {
@@ -120,12 +144,12 @@ object GoogleAuthManager {
     fun signOut(
         credentialManager: CredentialManager,
         scope: CoroutineScope,
-        auth: FirebaseAuth = Firebase.auth
+        auth: FirebaseAuth?
     ) {
         scope.launch {
             withContext(NonCancellable) {
                 try {
-                    auth.signOut()
+                    auth?.signOut()
                     credentialManager.clearCredentialState(ClearCredentialStateRequest())
                 } catch (e: Exception) {
                     Log.e(TAG, "Sign-out failed", e)

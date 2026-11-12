@@ -47,10 +47,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload latest Kader_POS.apk --clobber || \
-          gh release create latest Kader_POS.apk \
-            --title "Kader POS (APK)" \
-            --notes "Tap Kader_POS.apk below to download and install directly on Android."
+          if gh release view latest >/dev/null 2>&1; then
+            gh release upload latest Kader_POS.apk --clobber
+          else
+            gh release create latest Kader_POS.apk \
+              --title "Kader POS (APK)" \
+              --notes "Tap Kader_POS.apk below to download and install directly on Android."
+          fi
 
       - name: Upload APK artifact backup
         uses: actions/upload-artifact@v4

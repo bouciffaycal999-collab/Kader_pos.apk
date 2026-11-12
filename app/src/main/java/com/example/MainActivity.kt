@@ -153,17 +153,23 @@ private val ALL_NAV_TABS = listOf(
 
 @Composable
 fun KaderCeramicPosApp() {
-    val auth = remember { Firebase.auth }
-    val currentUser by GoogleAuthManager.authStateFlow(auth)
-        .collectAsStateWithLifecycle(initialValue = auth.currentUser)
+    val context = LocalContext.current
+    val hasFirebase = remember(context) { GoogleAuthManager.isFirebaseAvailable(context) }
+    val auth = remember(hasFirebase) {
+        if (hasFirebase) runCatching { Firebase.auth }.getOrNull() else null
+    }
+    val currentUser by remember(auth) {
+        GoogleAuthManager.authStateFlow(auth)
+    }.collectAsStateWithLifecycle(initialValue = auth?.currentUser)
     val user = currentUser
 
-    val context = LocalContext.current
     val prefs = remember(context) {
         context.getSharedPreferences("kader_pos_prefs", Context.MODE_PRIVATE)
     }
-    var allowOfflineMode by remember {
-        mutableStateOf(prefs.getBoolean("offline_mode_enabled", false))
+    var allowOfflineMode by remember(hasFirebase) {
+        mutableStateOf(
+            prefs.getBoolean("offline_mode_enabled", false) || !hasFirebase
+        )
     }
 
     if (user == null && !allowOfflineMode) {
@@ -187,8 +193,8 @@ fun KaderCeramicPosApp() {
                     "APPLICATION_KEY missing from CreationExtras"
                 }
                 val localRepo = PosRepository(app.applicationContext, AppDatabase.getInstance(app.applicationContext))
-                val remoteRepo = if (user != null) {
-                    val databaseId = app.getString(R.string.firestore_database_id)
+                val remoteRepo = if (user != null && hasFirebase) {
+                    val databaseId = FirestorePosRepository.resolveDatabaseId(app.applicationContext)
                     FirestorePosRepository(FirebaseFirestore.getInstance(databaseId))
                 } else {
                     null
