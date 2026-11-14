@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -12,7 +13,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -35,24 +34,35 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Calculate
+import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Factory
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Login
 import androidx.compose.material.icons.filled.ManageAccounts
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PointOfSale
 import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Storefront
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
@@ -63,11 +73,13 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationRailItemDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -94,9 +106,11 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.example.auth.AuthAttemptResult
 import com.example.auth.GoogleAuthManager
+import com.example.auth.GoogleAuthManager.findActivity
 import com.example.data.local.AppDatabase
 import com.example.data.remote.FirestorePosRepository
 import com.example.data.repository.PosRepository
+import com.example.service.DepotAlertMonitorService
 import com.example.ui.PosUiState
 import com.example.ui.PosViewModel
 import com.example.ui.components.InvoicePreviewPrintSheet
@@ -114,19 +128,21 @@ import com.example.ui.screens.StaffLockScreen
 import com.example.ui.screens.StockScreen
 import com.example.ui.screens.SuppliersScreen
 import com.example.ui.screens.UsersScreen
-import com.example.service.DepotAlertMonitorService
-import androidx.compose.material3.HorizontalDivider
+import com.example.ui.theme.Amber400
 import com.example.ui.theme.Amber500
-import com.example.ui.theme.Cyan300
+import com.example.ui.theme.Amber950
 import com.example.ui.theme.Cyan400
 import com.example.ui.theme.Cyan500
 import com.example.ui.theme.Cyan950
+import com.example.ui.theme.Emerald400
 import com.example.ui.theme.Emerald500
+import com.example.ui.theme.Emerald950
 import com.example.ui.theme.KaderPosTheme
-import com.example.ui.theme.Navy800
 import com.example.ui.theme.Navy950
 import com.example.ui.theme.OnDark
+import com.example.ui.theme.Rose400
 import com.example.ui.theme.Rose500
+import com.example.ui.theme.Rose950
 import com.example.ui.theme.Slate100
 import com.example.ui.theme.Slate400
 import com.example.ui.theme.Slate700
@@ -140,6 +156,7 @@ import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val pendingNotificationNav = MutableStateFlow<Pair<Boolean, String?>>(false to null)
@@ -213,15 +230,17 @@ fun KaderCeramicPosApp(
     val prefs = remember(context) {
         context.getSharedPreferences("kader_pos_prefs", Context.MODE_PRIVATE)
     }
+    LaunchedEffect(Unit) {
+        if (prefs.contains("offline_mode_enabled")) {
+            prefs.edit().remove("offline_mode_enabled").apply()
+        }
+    }
     var allowOfflineMode by remember(hasFirebase) {
-        mutableStateOf(
-            prefs.getBoolean("offline_mode_enabled", false) || !hasFirebase
-        )
+        mutableStateOf(!hasFirebase)
     }
 
     LaunchedEffect(user?.uid) {
         if (user != null) {
-            prefs.edit().putBoolean("offline_mode_enabled", false).apply()
             allowOfflineMode = false
         }
     }
@@ -229,15 +248,15 @@ fun KaderCeramicPosApp(
     if (user == null && !allowOfflineMode) {
         AuthScreen(
             onContinueOffline = {
-                prefs.edit().putBoolean("offline_mode_enabled", true).apply()
                 allowOfflineMode = true
             }
         )
         return
     }
 
+    val activityContext = remember(context) { context.findActivity() ?: context }
     val scope = rememberCoroutineScope()
-    val credentialManager = remember(context) { CredentialManager.create(context) }
+    val credentialManager = remember(activityContext) { CredentialManager.create(activityContext) }
 
     val viewModel: PosViewModel = viewModel(
         key = user?.uid ?: "offline_local",
@@ -268,21 +287,21 @@ fun KaderCeramicPosApp(
 
     KaderPosSignedInContent(
         viewModel = viewModel,
+        hasFirebase = hasFirebase,
         isGoogleSignedIn = user != null,
         pendingNotificationTarget = pendingNotificationTarget,
         onConsumeNotificationTarget = onConsumeNotificationTarget,
         onSignInGoogle = {
-            when (val res = GoogleAuthManager.signInInteractive(context, credentialManager, auth)) {
+            when (val res = GoogleAuthManager.signInInteractive(activityContext, credentialManager, auth)) {
                 AuthAttemptResult.Success -> null
                 AuthAttemptResult.Cancelled -> "Connexion Google annulée."
-                AuthAttemptResult.NoSavedCredential -> "Aucun compte Google disponible sur cet appareil."
+                AuthAttemptResult.NoSavedCredential -> "Aucun compte Google détecté sur cet appareil. Ajoutez un compte Google dans les paramètres Android puis réessayez."
                 is AuthAttemptResult.Error -> res.message
             }
         },
         onSignOutGoogle = {
             DepotAlertMonitorService.syncServiceState(context, isSignedIn = false, isAdminOrManager = false)
-            prefs.edit().putBoolean("offline_mode_enabled", false).apply()
-            allowOfflineMode = false
+            allowOfflineMode = !hasFirebase
             GoogleAuthManager.signOut(credentialManager, scope, auth)
         }
     )
@@ -292,6 +311,7 @@ fun KaderCeramicPosApp(
 @Composable
 private fun KaderPosSignedInContent(
     viewModel: PosViewModel,
+    hasFirebase: Boolean,
     isGoogleSignedIn: Boolean,
     pendingNotificationTarget: Pair<Boolean, String?>,
     onConsumeNotificationTarget: () -> Unit,
@@ -299,9 +319,11 @@ private fun KaderPosSignedInContent(
     onSignOutGoogle: () -> Unit
 ) {
     val context = LocalContext.current
+    val activityContext = remember(context) { context.findActivity() ?: context }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var showMoreTabsSheet by remember { mutableStateOf(false) }
+    var showCloudStatusDialog by remember { mutableStateOf(false) }
     var requestedNotifPermissionOnce by remember { mutableStateOf(false) }
 
     val notifPermissionLauncher = rememberLauncherForActivityResult(
@@ -436,14 +458,23 @@ private fun KaderPosSignedInContent(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     val cloudLabel = when {
+                                        !isGoogleSignedIn -> "LOCAL"
+                                        !state.isNetworkAvailable -> "HORS-LIGNE"
+                                        state.isSyncingCloud || state.pendingCloudWrites > 0 ->
+                                            if (state.pendingCloudWrites > 0) "SYNC (${state.pendingCloudWrites})" else "SYNC..."
                                         state.isCloudSynced -> "ONLINE"
-                                        !state.firebaseUserEmail.isNullOrBlank() && state.pendingCloudWrites > 0 ->
-                                            "SYNC (${state.pendingCloudWrites})"
-                                        !state.firebaseUserEmail.isNullOrBlank() -> "HORS-LIGNE"
-                                        else -> "LOCAL"
+                                        state.cloudSyncError != null -> "ERREUR SYNC"
+                                        else -> "CONNEXION..."
                                     }
-                                    val cloudBadgeColor = if (state.isCloudSynced) Emerald500 else Amber500
+                                    val cloudBadgeColor = when {
+                                        !isGoogleSignedIn -> Amber500
+                                        !state.isNetworkAvailable || state.cloudSyncError != null -> Amber500
+                                        state.isSyncingCloud || state.pendingCloudWrites > 0 -> Cyan400
+                                        state.isCloudSynced -> Emerald500
+                                        else -> Cyan400
+                                    }
                                     Surface(
+                                        onClick = { showCloudStatusDialog = true },
                                         shape = RoundedCornerShape(8.dp),
                                         color = cloudBadgeColor.copy(alpha = 0.12f),
                                         border = BorderStroke(1.dp, cloudBadgeColor.copy(alpha = 0.50f)),
@@ -454,7 +485,7 @@ private fun KaderPosSignedInContent(
                                             style = MaterialTheme.typography.labelSmall,
                                             color = cloudBadgeColor,
                                             fontWeight = FontWeight.Black,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                         )
                                     }
                                 }
@@ -540,6 +571,87 @@ private fun KaderPosSignedInContent(
                         }
                     )
                     HorizontalDivider(color = Slate800, thickness = 1.dp)
+                    if (!isGoogleSignedIn && hasFirebase && state.isNetworkAvailable) {
+                        Surface(
+                            onClick = { showCloudStatusDialog = true },
+                            color = Cyan950,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("offline_connect_banner")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(Icons.Default.CloudOff, contentDescription = null, tint = Cyan500, modifier = Modifier.size(16.dp))
+                                    Text(
+                                        text = "Mode Local • Connectez Google Cloud pour synchroniser en ligne",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = Cyan400,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Passer en ligne",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = Cyan500,
+                                    fontWeight = FontWeight.Black
+                                )
+                            }
+                        }
+                        HorizontalDivider(color = Slate800, thickness = 1.dp)
+                    } else if (isGoogleSignedIn && state.cloudSyncError != null) {
+                        Surface(
+                            onClick = { showCloudStatusDialog = true },
+                            color = Amber950,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("cloud_error_banner")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(Icons.Default.Warning, contentDescription = null, tint = Amber500, modifier = Modifier.size(16.dp))
+                                    Text(
+                                        text = state.cloudSyncError ?: "Synchronisation cloud en attente",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = Amber400,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Diagnostiquer",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = Amber500,
+                                    fontWeight = FontWeight.Black
+                                )
+                            }
+                        }
+                        HorizontalDivider(color = Slate800, thickness = 1.dp)
+                    }
                 }
             },
             bottomBar = {
@@ -748,7 +860,241 @@ private fun KaderPosSignedInContent(
                 onDismiss = { viewModel.closeNotificationsSheet() }
             )
         }
+
+        if (showCloudStatusDialog) {
+            BackHandler { showCloudStatusDialog = false }
+            CloudStatusDialog(
+                state = state,
+                isGoogleSignedIn = isGoogleSignedIn,
+                hasFirebase = hasFirebase,
+                onSignInGoogle = onSignInGoogle,
+                onRetryCloudSync = { viewModel.retryCloudSync() },
+                onSignOutGoogle = {
+                    showCloudStatusDialog = false
+                    onSignOutGoogle()
+                },
+                onAddGoogleAccount = {
+                    val addIntent = Intent(Settings.ACTION_ADD_ACCOUNT).apply {
+                        putExtra(Settings.EXTRA_ACCOUNT_TYPES, arrayOf("com.google"))
+                    }
+                    runCatching { activityContext.startActivity(addIntent) }
+                        .onFailure {
+                            runCatching {
+                                activityContext.startActivity(Intent(Settings.ACTION_SYNC_SETTINGS))
+                            }
+                        }
+                },
+                onDismiss = { showCloudStatusDialog = false }
+            )
+        }
     }
+}
+
+@Composable
+private fun CloudStatusDialog(
+    state: PosUiState,
+    isGoogleSignedIn: Boolean,
+    hasFirebase: Boolean,
+    onSignInGoogle: suspend () -> String?,
+    onRetryCloudSync: () -> Unit,
+    onSignOutGoogle: () -> Unit,
+    onAddGoogleAccount: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var isConnecting by remember { mutableStateOf(false) }
+    var signInError by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Slate900,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    imageVector = when {
+                        !isGoogleSignedIn -> Icons.Default.CloudOff
+                        state.isSyncingCloud -> Icons.Default.CloudSync
+                        state.isCloudSynced -> Icons.Default.CloudDone
+                        else -> Icons.Default.Warning
+                    },
+                    contentDescription = null,
+                    tint = when {
+                        !isGoogleSignedIn -> Amber500
+                        state.isSyncingCloud -> Cyan500
+                        state.isCloudSynced -> Emerald500
+                        else -> Amber500
+                    }
+                )
+                Text(
+                    text = "État Google Cloud & Sync",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Navy950,
+                    fontWeight = FontWeight.Black
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = when {
+                        !isGoogleSignedIn || !state.isNetworkAvailable || state.cloudSyncError != null -> Amber950
+                        state.isCloudSynced -> Emerald950
+                        else -> Cyan950
+                    },
+                    border = BorderStroke(
+                        1.dp,
+                        when {
+                            !isGoogleSignedIn || !state.isNetworkAvailable || state.cloudSyncError != null -> Amber500.copy(alpha = 0.4f)
+                            state.isCloudSynced -> Emerald500.copy(alpha = 0.4f)
+                            else -> Cyan500.copy(alpha = 0.4f)
+                        }
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = when {
+                                !hasFirebase -> "Configuration Firebase absente"
+                                !isGoogleSignedIn -> "Mode Local (Hors-Ligne)"
+                                !state.isNetworkAvailable -> "Pas de connexion Internet (Wi-Fi / 4G coupé)"
+                                state.isSyncingCloud -> "Synchronisation Cloud Firestore en cours..."
+                                state.cloudSyncError != null -> "Sync Cloud en attente"
+                                state.isCloudSynced -> "Connecté en temps réel (ONLINE)"
+                                else -> "Connexion Cloud en cours..."
+                            },
+                            style = MaterialTheme.typography.titleSmall,
+                            color = Slate100,
+                            fontWeight = FontWeight.Black
+                        )
+                        if (!state.firebaseUserEmail.isNullOrBlank()) {
+                            Text(
+                                text = "Compte : ${state.firebaseUserEmail}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Emerald400,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        if (state.pendingCloudWrites > 0) {
+                            Text(
+                                text = "${state.pendingCloudWrites} écriture(s) en cours d'envoi...",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Amber400,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        state.cloudSyncError?.let { err ->
+                            Text(
+                                text = err,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Rose400,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+
+                Text(
+                    text = "Pour synchroniser stock, factures et alertes entre le Dépôt (Admin) et les Vendeurs d'autres villes, connectez le même compte Google sur chaque appareil.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Slate400
+                )
+
+                signInError?.let { err ->
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = Rose950,
+                        border = BorderStroke(1.dp, Rose400)
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = err,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Rose400,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (err.contains("Aucun compte Google", ignoreCase = true)) {
+                                TextButton(onClick = onAddGoogleAccount) {
+                                    Icon(Icons.Default.PersonAdd, contentDescription = null, tint = Cyan500, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Ajouter un compte Google", color = Cyan500, fontWeight = FontWeight.Black)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (!isGoogleSignedIn && hasFirebase) {
+                    Button(
+                        onClick = {
+                            if (isConnecting) return@Button
+                            isConnecting = true
+                            signInError = null
+                            scope.launch {
+                                val err = onSignInGoogle()
+                                isConnecting = false
+                                if (err != null) {
+                                    signInError = err
+                                } else {
+                                    onDismiss()
+                                }
+                            }
+                        },
+                        enabled = !isConnecting,
+                        modifier = Modifier.fillMaxWidth().height(48.dp).testTag("cloud_dialog_signin_btn"),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Cyan500, contentColor = OnDark)
+                    ) {
+                        if (isConnecting) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = OnDark)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Connexion Google...", fontWeight = FontWeight.Black)
+                        } else {
+                            Icon(Icons.Default.Login, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Connecter Google Cloud", fontWeight = FontWeight.Black)
+                        }
+                    }
+                } else if (isGoogleSignedIn) {
+                    Button(
+                        onClick = onRetryCloudSync,
+                        enabled = state.isNetworkAvailable && !state.isSyncingCloud,
+                        modifier = Modifier.fillMaxWidth().height(48.dp).testTag("cloud_dialog_retry_btn"),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Cyan500, contentColor = OnDark)
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Synchroniser maintenant", fontWeight = FontWeight.Black)
+                    }
+                    OutlinedButton(
+                        onClick = onSignOutGoogle,
+                        modifier = Modifier.fillMaxWidth().height(46.dp).testTag("cloud_dialog_signout_btn"),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, Rose500)
+                    ) {
+                        Text("Changer / Déconnecter compte Google", color = Rose400, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Fermer", color = Slate400, fontWeight = FontWeight.Bold)
+            }
+        }
+    )
 }
 
 @Composable
@@ -855,6 +1201,7 @@ private fun ActiveTabContent(
             firebaseUserEmail = state.firebaseUserEmail,
             isCloudSynced = state.isCloudSynced,
             isNetworkAvailable = state.isNetworkAvailable,
+            isSyncingCloud = state.isSyncingCloud,
             pendingCloudWrites = state.pendingCloudWrites,
             cloudSyncError = state.cloudSyncError,
             depotWatchEnabled = state.depotWatchEnabled,

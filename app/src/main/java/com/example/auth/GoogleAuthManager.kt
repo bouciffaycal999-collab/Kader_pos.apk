@@ -12,6 +12,7 @@ import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
+import com.example.R
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -61,18 +62,12 @@ object GoogleAuthManager {
     }
 
     private fun resolveServerClientId(context: Context): String? {
-        val packagesToTry = listOf(context.packageName, "com.example").distinct()
-        for (pkg in packagesToTry) {
-            val resId = context.resources.getIdentifier("default_web_client_id", "string", pkg)
-            if (resId != 0) {
-                val value = runCatching { context.getString(resId) }.getOrNull()?.trim()
-                if (!value.isNullOrBlank()) return value
-            }
-        }
-        return null
+        return runCatching {
+            context.getString(R.string.default_web_client_id).trim().takeIf { it.isNotBlank() }
+        }.getOrNull()
     }
 
-    private tailrec fun Context.findActivity(): Activity? = when (this) {
+    tailrec fun Context.findActivity(): Activity? = when (this) {
         is Activity -> this
         is ContextWrapper -> baseContext.findActivity()
         else -> null
@@ -154,7 +149,10 @@ object GoogleAuthManager {
             AuthAttemptResult.Cancelled
         } catch (e: GetCredentialException) {
             Log.e(TAG, "Google Credential error (${e.type}): ${e.message}", e)
-            AuthAttemptResult.Error(e.errorMessage?.toString()?.takeIf { it.isNotBlank() } ?: e.localizedMessage ?: "Échec de la connexion Google.")
+            val detail = e.errorMessage?.toString()?.takeIf { it.isNotBlank() }
+                ?: e.localizedMessage?.takeIf { it.isNotBlank() }
+                ?: "Vérifiez Google Play Services et votre connexion Internet."
+            AuthAttemptResult.Error("Erreur Google Sign-In : $detail")
         } catch (e: Exception) {
             Log.e(TAG, "Google Sign-In failed: ${e.message}", e)
             AuthAttemptResult.Error(e.localizedMessage ?: "Échec de la connexion Google.")

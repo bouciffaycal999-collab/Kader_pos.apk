@@ -23,9 +23,18 @@ import com.example.data.repository.PosRepository
 import com.example.ui.components.InvoicePdfGenerator
 import com.example.ui.components.buildWhatsAppManagementMessage
 import com.example.util.SaleSystemNotifier
+import android.os.Looper
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
+import com.example.ui.PosUiState
+import com.example.ui.PosViewModel
 import com.google.firebase.firestore.FirebaseFirestoreException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -33,6 +42,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.robolectric.Shadows
@@ -646,6 +656,256 @@ class PosFirestoreRuleTest : FirestoreEmulatorTestBase() {
         } finally {
             dbAmine.close()
             dbAdmin.close()
+        }
+    }
+
+    @Test
+    fun fullAssetCatalogAndPosRepositoryDefaultsPassRulesOnBootstrap() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val bootstrapEmail = "bootstrap.${UUID.randomUUID().toString().take(8)}@test.com"
+        val uid = signInTestUser(bootstrapEmail)
+        val remote = FirestorePosRepository(firestore)
+        val localDb = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+
+        try {
+            val localRepo = PosRepository(context, localDb)
+            localRepo.ensureSeeded()
+
+            val seededProducts = localRepo.getProductsSnapshot()
+            assertTrue("Expected full catalog seed (~485 items), got ${seededProducts.size}", seededProducts.size >= 400)
+
+            withTimeout(30_000L) {
+                remote.ensureUserAccount(uid, bootstrapEmail, "Bootstrap Owner")
+                remote.seedProductsIfEmpty(uid, seededProducts)
+                remote.seedDefaultsIfEmpty(
+                    userId = uid,
+                    staffUsers = localRepo.getUsersSnapshot(),
+                    customers = localRepo.getCustomersSnapshot(),
+                    suppliers = localRepo.getSuppliersSnapshot(),
+                    caisseMovements = localRepo.getCaisseSnapshot(),
+                    storeInfo = localRepo.getStoreInfoSnapshot(),
+                    settings = localRepo.getSettingsSnapshot(),
+                    rolePolicies = localRepo.getRolePoliciesSnapshot()
+                )
+                remote.seedOfflineHistoryIfEmpty(
+                    userId = uid,
+                    invoices = localRepo.getInvoicesSnapshot(),
+                    supplierMovements = localRepo.getSupplierMovementsSnapshot(),
+                    dailyCaisseCounts = localRepo.getDailyCaisseCountsSnapshot(),
+                    notifications = localRepo.getNotificationsSnapshot()
+                )
+                remote.waitForPendingWrites()
+            }
+
+            val remoteProducts = withTimeout(FLOW_TIMEOUT_MS) {
+                remote.observeProducts(uid).first { it.size == seededProducts.size }
+            }
+            assertEquals(seededProducts.size, remoteProducts.size)
+
+            val remoteUsers = withTimeout(FLOW_TIMEOUT_MS) {
+                remote.observeStaffUsers(uid).first { it.size == PosSeeds.DEFAULT_USERS.size }
+            }
+            assertEquals(PosSeeds.DEFAULT_USERS.size, remoteUsers.size)
+
+            val remotePolicies = withTimeout(FLOW_TIMEOUT_MS) {
+                remote.observeRolePolicies(uid).first { it.size == 3 }
+            }
+            assertEquals(3, remotePolicies.size)
+
+            val remoteStore = withTimeout(FLOW_TIMEOUT_MS) {
+                remote.observeStoreInfo(uid).first { it != null }
+            }
+            assertEquals(PosSeeds.DEFAULT_STORE_INFO.nom, remoteStore?.nom)
+
+            val remoteSettings = withTimeout(FLOW_TIMEOUT_MS) {
+                remote.observeAppSettings(uid).first { it != null }
+            }
+            assertEquals(PosSeeds.DEFAULT_SETTINGS.activeStore, remoteSettings?.activeStore)
+        } finally {
+            localDb.close()
+        }
+    }
+
+    @Test
+    fun posViewModelBootstrapReachesOnlineAndSyncsSaleToSecondDevice() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        Shadows.shadowOf(context as Application).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val syncEmail = "vmsync.${UUID.randomUUID().toString().take(8)}@test.com"
+        val uid = signInTestUser(syncEmail)
+        val remote = FirestorePosRepository(firestore)
+
+        val dbA = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val dbB = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val storeA = ViewModelStore()
+        val storeB = ViewModelStore()
+
+        val vmA = ViewModelProvider(
+            storeA,
+            object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                    PosViewModel(
+                        repository = PosRepository(context, dbA),
+                        firestoreRepo = remote,
+                        currentUserId = uid,
+                        userEmail = syncEmail,
+                        userDisplayName = "Device A Seller",
+                        isNetworkConnectedFlow = MutableStateFlow(true),
+                        appContext = context
+                    ) as T
+            }
+        )[PosViewModel::class.java]
+
+        val subA = CoroutineScope(Dispatchers.IO).launch { vmA.uiState.collect {} }
+
+        suspend fun awaitVm(vm: PosViewModel, timeoutMs: Long = 20_000L, predicate: (PosUiState) -> Boolean): PosUiState {
+            return withTimeout(timeoutMs) {
+                while (true) {
+                    Shadows.shadowOf(Looper.getMainLooper()).idle()
+                    val s = vm.uiState.value
+                    if (predicate(s)) return@withTimeout s
+                    delay(20)
+                }
+                @Suppress("UNREACHABLE_CODE")
+                vm.uiState.value
+            }
+        }
+
+        var subB: kotlinx.coroutines.Job? = null
+        try {
+            val onlineA = awaitVm(vmA) { !it.isLoading && it.isCloudSynced && it.products.isNotEmpty() && it.users.isNotEmpty() }
+            assertNull("Unexpected bootstrap error: ${onlineA.cloudSyncError}", onlineA.cloudSyncError)
+            assertTrue(onlineA.isCloudSynced)
+
+            val vmB = ViewModelProvider(
+                storeB,
+                object : ViewModelProvider.Factory {
+                    @Suppress("UNCHECKED_CAST")
+                    override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                        PosViewModel(
+                            repository = PosRepository(context, dbB),
+                            firestoreRepo = remote,
+                            currentUserId = uid,
+                            userEmail = syncEmail,
+                            userDisplayName = "Device B Admin",
+                            isNetworkConnectedFlow = MutableStateFlow(true),
+                            appContext = context
+                        ) as T
+                }
+            )[PosViewModel::class.java]
+            subB = CoroutineScope(Dispatchers.IO).launch { vmB.uiState.collect {} }
+
+            val onlineB = awaitVm(vmB) { !it.isLoading && it.isCloudSynced && it.products.size == onlineA.products.size }
+            assertNull(onlineB.cloudSyncError)
+
+            val targetProd = onlineA.products.first { it.stock > 5 }
+            val initialStock = targetProd.stock
+            val seller = onlineA.users.first { it.name == "Amine" }
+            val admin = onlineB.users.first { it.name == "Kader" }
+
+            vmA.attemptUnlock(seller, seller.pin)
+            vmB.attemptUnlock(admin, admin.pin)
+            awaitVm(vmA) { !it.isLocked }
+            awaitVm(vmB) { !it.isLocked }
+
+            vmA.confirmCalculatorToCart(
+                product = targetProd,
+                cartons = 2,
+                pieces = 0,
+                m2Total = targetProd.m2Carton * 2,
+                prixPerM2 = targetProd.prix,
+                bain = "",
+                calibre = "",
+                editingItemId = null
+            )
+            awaitVm(vmA) { it.cart.isNotEmpty() }
+
+            vmA.finalizeSale(
+                client = InvoiceClient(nom = "Client Multi Ville"),
+                remise = 0.0,
+                montantPaye = 5000.0,
+                modePaiement = "Espèces",
+                notes = "Test sync multi appareils"
+            )
+
+            val adminSynced = awaitVm(vmB) { state ->
+                state.invoices.any { it.client.nom == "Client Multi Ville" } &&
+                    state.products.firstOrNull { it.id == targetProd.id }?.stock == initialStock - 2
+            }
+            assertEquals(initialStock - 2, adminSynced.products.first { it.id == targetProd.id }.stock)
+            assertTrue(adminSynced.notifications.any { it.client == "Client Multi Ville" })
+        } finally {
+            subA.cancel()
+            subB?.cancel()
+            storeA.clear()
+            storeB.clear()
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+            delay(50)
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+            dbA.close()
+            dbB.close()
+        }
+    }
+
+    @Test
+    fun posViewModelStartsOfflineAndAutoSyncsWhenNetworkReturns() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val reconnectEmail = "reconnect.${UUID.randomUUID().toString().take(8)}@test.com"
+        val uid = signInTestUser(reconnectEmail)
+        val remote = FirestorePosRepository(firestore)
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val store = ViewModelStore()
+        val networkFlow = MutableStateFlow(false)
+
+        val vm = ViewModelProvider(
+            store,
+            object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                    PosViewModel(
+                        repository = PosRepository(context, db),
+                        firestoreRepo = remote,
+                        currentUserId = uid,
+                        userEmail = reconnectEmail,
+                        userDisplayName = "Offline First User",
+                        isNetworkConnectedFlow = networkFlow,
+                        appContext = context
+                    ) as T
+            }
+        )[PosViewModel::class.java]
+
+        val sub = CoroutineScope(Dispatchers.IO).launch { vm.uiState.collect {} }
+
+        suspend fun awaitVm(timeoutMs: Long = 20_000L, predicate: (PosUiState) -> Boolean): PosUiState {
+            return withTimeout(timeoutMs) {
+                while (true) {
+                    Shadows.shadowOf(Looper.getMainLooper()).idle()
+                    val s = vm.uiState.value
+                    if (predicate(s)) return@withTimeout s
+                    delay(20)
+                }
+                @Suppress("UNREACHABLE_CODE")
+                vm.uiState.value
+            }
+        }
+
+        try {
+            val offlineState = awaitVm { !it.isLoading && !it.isNetworkAvailable && it.cloudSyncError != null }
+            assertFalse(offlineState.isCloudSynced)
+            assertFalse(offlineState.isSyncingCloud)
+            assertTrue(offlineState.products.isNotEmpty())
+
+            networkFlow.value = true
+            val onlineState = awaitVm { it.isNetworkAvailable && it.isCloudSynced && !it.isSyncingCloud }
+            assertNull(onlineState.cloudSyncError)
+            assertTrue(onlineState.isCloudSynced)
+        } finally {
+            sub.cancel()
+            store.clear()
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+            delay(50)
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+            db.close()
         }
     }
 

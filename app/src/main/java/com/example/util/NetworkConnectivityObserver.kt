@@ -11,13 +11,26 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 object NetworkConnectivityObserver {
+    private fun hasInternetCapability(cm: ConnectivityManager): Boolean {
+        val active = cm.activeNetwork
+        if (active != null) {
+            val caps = cm.getNetworkCapabilities(active)
+            if (caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                return true
+            }
+        }
+        @Suppress("DEPRECATION")
+        return cm.allNetworks.any { network ->
+            val caps = cm.getNetworkCapabilities(network)
+            caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        }
+    }
+
     fun isCurrentlyOnline(context: Context): Boolean {
         return runCatching {
             val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
                 ?: return true
-            val active = cm.activeNetwork ?: return false
-            val caps = cm.getNetworkCapabilities(active) ?: return false
-            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            hasInternetCapability(cm)
         }.getOrDefault(true)
     }
 
@@ -32,9 +45,7 @@ object NetworkConnectivityObserver {
 
         fun checkNow(): Boolean {
             return runCatching {
-                val active = cm.activeNetwork ?: return@runCatching false
-                val caps = cm.getNetworkCapabilities(active) ?: return@runCatching false
-                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                hasInternetCapability(cm)
             }.getOrDefault(true)
         }
 
@@ -46,8 +57,7 @@ object NetworkConnectivityObserver {
             }
 
             override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
-                val ok = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                trySend(ok)
+                trySend(checkNow())
             }
 
             override fun onLost(network: Network) {
@@ -55,7 +65,7 @@ object NetworkConnectivityObserver {
             }
 
             override fun onUnavailable() {
-                trySend(false)
+                trySend(checkNow())
             }
         }
 

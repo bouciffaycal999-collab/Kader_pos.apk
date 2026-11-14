@@ -90,6 +90,7 @@ data class PosUiState(
     val statusMessage: String? = null,
     val firebaseUserEmail: String? = null,
     val isCloudSynced: Boolean = false,
+    val isSyncingCloud: Boolean = false,
     val isNetworkAvailable: Boolean = true,
     val pendingCloudWrites: Int = 0,
     val cloudSyncError: String? = null,
@@ -120,6 +121,7 @@ private data class LocalNavState(
     val editingInvoice: Invoice? = null,
     val statusMessage: String? = null,
     val isCloudSynced: Boolean = false,
+    val isSyncingCloud: Boolean = false,
     val pendingCloudWrites: Int = 0,
     val cloudSyncError: String? = null,
     val depotWatchEnabled: Boolean = true
@@ -153,10 +155,18 @@ class PosViewModel(
                 val uid = currentUserId
                 if (online && wasOffline && remote != null && !uid.isNullOrBlank()) {
                     syncBootstrapAndFlush(remote, uid, notifyUser = false)
+                } else if (!online && remote != null && !uid.isNullOrBlank()) {
+                    navState.update {
+                        it.copy(
+                            isCloudSynced = false,
+                            cloudSyncError = "Pas de connexion Internet — cache local actif"
+                        )
+                    }
                 }
             }
         }
         viewModelScope.launch {
+            networkOnlineState.value = isNetworkConnectedFlow.firstOrNull() ?: true
             repository.ensureSeeded()
             navState.update { it.copy(isReady = true) }
             val remote = firestoreRepo
@@ -167,15 +177,22 @@ class PosViewModel(
         }
     }
 
-    private suspend fun bootstrapAndObserveCloud(
+    private fun bootstrapAndObserveCloud(
         remote: FirestorePosRepository,
         uid: String
     ) {
         if (networkOnlineState.value) {
-            syncBootstrapAndFlush(remote, uid, notifyUser = false)
+            navState.update { it.copy(isSyncingCloud = true, cloudSyncError = null) }
+            viewModelScope.launch {
+                syncBootstrapAndFlush(remote, uid, notifyUser = false)
+            }
         } else {
             navState.update {
-                it.copy(cloudSyncError = "Hors connexion — cache local actif")
+                it.copy(
+                    isCloudSynced = false,
+                    isSyncingCloud = false,
+                    cloudSyncError = "Pas de connexion Internet — cache local actif"
+                )
             }
         }
 
@@ -279,8 +296,22 @@ class PosViewModel(
         uid: String,
         notifyUser: Boolean
     ) {
+        if (!networkOnlineState.value) {
+            navState.update {
+                it.copy(
+                    isCloudSynced = false,
+                    isSyncingCloud = false,
+                    cloudSyncError = "Pas de connexion Internet — cache local actif",
+                    statusMessage = if (notifyUser) "Pas de connexion Internet — vérifiez le Wi-Fi / 4G" else it.statusMessage
+                )
+            }
+            return
+        }
         bootstrapMutex.withLock {
+            navState.update { it.copy(isSyncingCloud = true, cloudSyncError = null) }
             try {
+                // Verify authenticated server access first before bulk seed operations
+                remote.ensureUserAccount(uid, userEmail, userDisplayName)
                 if (repository.hasPendingOfflineSync()) {
                     remote.mergeMissingOfflineData(
                         userId = uid,
@@ -319,16 +350,26 @@ class PosViewModel(
                     )
                     initialCloudSeedCompleted = true
                 }
-                remote.ensureUserAccount(uid, userEmail, userDisplayName)
-                withTimeoutOrNull(8_000L) {
+                val flushed = withTimeoutOrNull(15_000L) {
                     remote.waitForPendingWrites()
-                }
-                navState.update {
-                    it.copy(
-                        isCloudSynced = true,
-                        cloudSyncError = null,
-                        statusMessage = if (notifyUser) "Cloud Firestore synchronisé en temps réel" else it.statusMessage
-                    )
+                    true
+                } ?: false
+                if (flushed) {
+                    navState.update {
+                        it.copy(
+                            isCloudSynced = true,
+                            cloudSyncError = null,
+                            statusMessage = if (notifyUser) "Cloud Firestore synchronisé en temps réel" else it.statusMessage
+                        )
+                    }
+                } else {
+                    navState.update {
+                        it.copy(
+                            isCloudSynced = false,
+                            cloudSyncError = "Délai Cloud dépassé — vérifiez votre connexion Internet",
+                            statusMessage = if (notifyUser) "Délai Cloud dépassé — vérifiez Internet" else it.statusMessage
+                        )
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -337,10 +378,13 @@ class PosViewModel(
                 Log.w(TAG, "Cloud bootstrap warning", root)
                 navState.update {
                     it.copy(
+                        isCloudSynced = false,
                         cloudSyncError = root.message ?: "Synchronisation cloud en attente",
                         statusMessage = if (notifyUser) "Sync cloud en attente : ${root.message ?: "vérifiez internet"}" else it.statusMessage
                     )
                 }
+            } finally {
+                navState.update { it.copy(isSyncingCloud = false) }
             }
         }
     }
@@ -398,7 +442,8 @@ class PosViewModel(
                 }
                 .collect { value ->
                     onEachValue(value)
-                    if (!navState.value.isCloudSynced || navState.value.cloudSyncError != null) {
+                    val cur = navState.value
+                    if (!cur.isSyncingCloud && cur.cloudSyncError?.startsWith("Reconnexion temps réel") == true) {
                         navState.update { it.copy(isCloudSynced = true, cloudSyncError = null) }
                     }
                 }
@@ -545,6 +590,7 @@ class PosViewModel(
             statusMessage = nav.statusMessage,
             firebaseUserEmail = userEmail,
             isCloudSynced = effectiveCloudSynced,
+            isSyncingCloud = nav.isSyncingCloud,
             isNetworkAvailable = isNetworkAvailable,
             pendingCloudWrites = nav.pendingCloudWrites,
             cloudSyncError = nav.cloudSyncError,

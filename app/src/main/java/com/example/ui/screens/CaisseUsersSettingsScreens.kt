@@ -908,6 +908,7 @@ fun SettingsScreen(
     onSignInGoogle: suspend () -> String?,
     onSignOutGoogle: () -> Unit,
     isNetworkAvailable: Boolean = true,
+    isSyncingCloud: Boolean = false,
     pendingCloudWrites: Int = 0,
     onRetryCloudSync: () -> Unit = {},
     depotWatchEnabled: Boolean = true,
@@ -1294,6 +1295,7 @@ fun SettingsScreen(
                         Text(
                             text = when {
                                 !isNetworkAvailable -> "Reconnexion et envoi automatique dès le retour d'internet."
+                                isSyncingCloud -> "Synchronisation Cloud Firestore en cours..."
                                 cloudSyncError != null -> "Synchronisation : $cloudSyncError"
                                 isCloudSynced -> "Cloud Firestore synchronisé en temps réel (multi-villes actif)"
                                 else -> "Connexion au Cloud Firestore..."
@@ -1301,6 +1303,7 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = when {
                                 !isNetworkAvailable || cloudSyncError != null -> Amber400
+                                isSyncingCloud -> Cyan400
                                 isCloudSynced -> Emerald400
                                 else -> Slate400
                             },
