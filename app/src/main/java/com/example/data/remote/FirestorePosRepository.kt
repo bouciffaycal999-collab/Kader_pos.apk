@@ -1,7 +1,6 @@
 package com.example.data.remote
 
 import android.content.Context
-import com.example.R
 import com.example.data.model.AppSettings
 import com.example.data.model.CaisseMovement
 import com.example.data.model.Customer
@@ -38,9 +37,16 @@ class FirestorePosRepository(private val db: FirebaseFirestore) {
     )
 
     companion object {
+        @Suppress("DiscouragedApi")
         fun resolveDatabaseId(context: Context): String {
             return runCatching {
-                context.getString(R.string.firestore_database_id).trim().takeIf { it.isNotBlank() }
+                val resId = context.resources.getIdentifier(
+                    "firestore_database_id",
+                    "string",
+                    context.packageName
+                )
+                if (resId == 0) null
+                else context.getString(resId).trim().takeIf { it.isNotBlank() }
             }.getOrNull() ?: "(default)"
         }
     }

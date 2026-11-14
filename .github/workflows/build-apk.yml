@@ -29,6 +29,26 @@ jobs:
             keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
 
+      - name: Restore Firebase config from GitHub Secret
+        id: firebase_cfg
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+            echo "Restored app/google-services.json from GOOGLE_SERVICES_JSON secret."
+          elif [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > app/google-services.json
+            echo "Restored app/google-services.json from GOOGLE_SERVICES_JSON_BASE64 secret."
+          fi
+          if [ -s app/google-services.json ]; then
+            echo "has_firebase=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_firebase=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::app/google-services.json absent : l'APK sera compilé en mode local sans sync Cloud tant que le secret GOOGLE_SERVICES_JSON n'est pas ajouté dans GitHub."
+          fi
+
       - name: Accept Android SDK licenses
         run: yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
 
@@ -46,13 +66,20 @@ jobs:
       - name: Publish direct APK download in GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
+          HAS_FIREBASE: ${{ steps.firebase_cfg.outputs.has_firebase }}
         run: |
+          if [ "$HAS_FIREBASE" = "true" ]; then
+            NOTES="Tap CERAMICA_POS.apk below to install. Google Cloud & Firestore Online Sync: ACTIVE."
+          else
+            NOTES="Tap CERAMICA_POS.apk below to install. Mode Local uniquement (ajoutez le secret GOOGLE_SERVICES_JSON dans GitHub Settings -> Secrets -> Actions puis relancez le workflow pour activer le mode Online)."
+          fi
           if gh release view latest >/dev/null 2>&1; then
             gh release upload latest CERAMICA_POS.apk --clobber
+            gh release edit latest --notes "$NOTES"
           else
             gh release create latest CERAMICA_POS.apk \
               --title "CERAMICA POS (APK)" \
-              --notes "Tap CERAMICA_POS.apk below to download and install directly on Android."
+              --notes "$NOTES"
           fi
 
       - name: Upload APK artifact backup

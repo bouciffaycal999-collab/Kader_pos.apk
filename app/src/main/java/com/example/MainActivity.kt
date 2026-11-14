@@ -963,7 +963,7 @@ private fun CloudStatusDialog(
                     ) {
                         Text(
                             text = when {
-                                !hasFirebase -> "Configuration Firebase absente"
+                                !hasFirebase -> "Configuration Firebase absente (google-services.json manquant dans cet APK)"
                                 !isGoogleSignedIn -> "Mode Local (Hors-Ligne)"
                                 !state.isNetworkAvailable -> "Pas de connexion Internet (Wi-Fi / 4G coupé)"
                                 state.isSyncingCloud -> "Synchronisation Cloud Firestore en cours..."
@@ -975,6 +975,14 @@ private fun CloudStatusDialog(
                             color = Slate100,
                             fontWeight = FontWeight.Black
                         )
+                        if (!hasFirebase) {
+                            Text(
+                                text = "Générez l'APK directement depuis Google AI Studio ou ajoutez le secret GOOGLE_SERVICES_JSON dans votre dépôt GitHub puis relancez le workflow.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Rose400,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                         if (!state.firebaseUserEmail.isNullOrBlank()) {
                             Text(
                                 text = "Compte : ${state.firebaseUserEmail}",
