@@ -184,4 +184,57 @@ class TileCalculatorMathTest {
         assertEquals(3.96, m2Total, 0.001)
         assertEquals(4080.0, subTotal, 0.01)
     }
+
+    @Test
+    fun directM2PerCartonToCartonsWithMargin() {
+        // 30 m2 at 1.08 m2/ctn (6 pcs/ctn) with +10% margin = 33 m2 -> ceil(33 / 1.08) = 31 cartons
+        val res = TileCalculatorMath.calculateCartonsFromM2PerCarton(
+            m2PerCarton = 1.08,
+            piecesPerCarton = 6,
+            requiredAreaM2 = 30.0,
+            marginPercent = 10
+        )
+        assertEquals(0.18, res.tileAreaM2, 0.0001)
+        assertEquals(1.08, res.m2PerCarton, 0.0001)
+        assertEquals(33.0, res.targetAreaWithMarginM2, 0.01)
+        assertEquals(31, res.cartonsNeeded)
+        assertEquals(33.48, res.deliveredAreaM2, 0.01)
+        assertEquals(186, res.totalPieces)
+    }
+
+    @Test
+    fun roomTilePlanCalculatesAreaTileCountAndCartonsWithConfigurableCoverage() {
+        // 5m x 4m = 20 m2, 60x60 cm tile (0.36 m2/tile -> 56 tiles), custom 1.44 m2/carton -> ceil(20 / 1.44) = 14 cartons
+        val res1 = TileCalculatorMath.calculateRoomTilePlan(
+            roomLengthM = 5.0,
+            roomWidthM = 4.0,
+            tileLength = 60.0,
+            tileWidth = 60.0,
+            tileUnit = TileDimensionUnit.CM,
+            m2PerCarton = 1.44,
+            marginPercent = 0
+        )
+        assertEquals(20.0, res1.totalAreaM2, 0.01)
+        assertEquals(0.36, res1.tileAreaM2, 0.0001)
+        assertEquals(56, res1.tilesNeeded)
+        assertEquals(14, res1.cartonsNeeded)
+        assertEquals(20.16, res1.deliveredAreaM2, 0.01)
+        assertEquals(0.16, res1.surplusAreaM2, 0.01)
+
+        // Configurable 1.08 m2/carton with +10% waste (22 m2) and 0.3m x 0.6m tile (0.18 m2/tile) -> 123 tiles, ceil(22 / 1.08) = 21 cartons
+        val res2 = TileCalculatorMath.calculateRoomTilePlan(
+            roomLengthM = 5.0,
+            roomWidthM = 4.0,
+            tileLength = 0.30,
+            tileWidth = 0.60,
+            tileUnit = TileDimensionUnit.METER,
+            m2PerCarton = 1.08,
+            marginPercent = 10
+        )
+        assertEquals(20.0, res2.totalAreaM2, 0.01)
+        assertEquals(22.0, res2.targetAreaWithMarginM2, 0.01)
+        assertEquals(123, res2.tilesNeeded)
+        assertEquals(21, res2.cartonsNeeded)
+        assertEquals(22.68, res2.deliveredAreaM2, 0.01)
+    }
 }

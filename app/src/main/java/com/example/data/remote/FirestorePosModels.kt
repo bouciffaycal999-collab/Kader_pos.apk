@@ -9,11 +9,13 @@ import com.example.data.model.DepotNotification
 import com.example.data.model.FreeLineItem
 import com.example.data.model.Invoice
 import com.example.data.model.InvoiceClient
+import com.example.data.model.RolePolicy
 import com.example.data.model.StaffUser
 import com.example.data.model.StoreInfo
 import com.example.data.model.Supplier
 import com.example.data.model.SupplierMovement
 import com.example.data.model.TileProduct
+import com.example.data.model.WaRecipient
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentId
 import com.google.firebase.firestore.IgnoreExtraProperties
@@ -47,6 +49,8 @@ data class TileProductDoc(
     val choix: String = "1er Choix",
     val categorie: String = "sol",
     val description: String = "",
+    val pricingUnit: String = "carton",
+    val prixPiece: Double = 0.0,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 ) {
@@ -66,7 +70,9 @@ data class TileProductDoc(
         finition = finition,
         choix = choix,
         categorie = categorie,
-        description = description
+        description = description,
+        pricingUnit = pricingUnit.ifBlank { "carton" },
+        prixPiece = prixPiece
     )
 
     companion object {
@@ -91,6 +97,8 @@ data class TileProductDoc(
             choix = p.choix,
             categorie = p.categorie,
             description = p.description,
+            pricingUnit = p.pricingUnit,
+            prixPiece = p.prixPiece,
             createdAt = createdAt,
             updatedAt = updatedAt
         )
@@ -136,7 +144,8 @@ data class CartItemDoc(
     val color: String = "#94a3b8",
     val colorName: String = "",
     val image: String = "",
-    val prixPiece: Double = 0.0
+    val prixPiece: Double = 0.0,
+    val pricingUnit: String = "carton"
 ) {
     fun toDomain() = CartItem(
         id = id,
@@ -157,7 +166,8 @@ data class CartItemDoc(
         color = color,
         colorName = colorName,
         image = image,
-        prixPiece = prixPiece
+        prixPiece = prixPiece,
+        pricingUnit = pricingUnit.ifBlank { "carton" }
     )
 
     companion object {
@@ -180,7 +190,8 @@ data class CartItemDoc(
             color = c.color,
             colorName = c.colorName,
             image = c.image,
-            prixPiece = c.prixPiece
+            prixPiece = c.prixPiece,
+            pricingUnit = c.pricingUnit
         )
     }
 }
@@ -233,6 +244,9 @@ data class InvoiceDoc(
     val modePaiement: String = "Espèces",
     val statut: String = "Payé",
     val notes: String = "",
+    val vendeurTel: String = "",
+    val hidePrices: Boolean = false,
+    val whatsappSentBeforePrint: Boolean = false,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 ) {
@@ -252,7 +266,10 @@ data class InvoiceDoc(
         resteAPayer = resteAPayer,
         modePaiement = modePaiement,
         statut = statut,
-        notes = notes
+        notes = notes,
+        vendeurTel = vendeurTel,
+        hidePrices = hidePrices,
+        whatsappSentBeforePrint = whatsappSentBeforePrint
     )
 
     companion object {
@@ -277,6 +294,9 @@ data class InvoiceDoc(
             modePaiement = inv.modePaiement,
             statut = inv.statut,
             notes = inv.notes,
+            vendeurTel = inv.vendeurTel,
+            hidePrices = inv.hidePrices,
+            whatsappSentBeforePrint = inv.whatsappSentBeforePrint,
             createdAt = createdAt,
             updatedAt = updatedAt
         )
@@ -497,6 +517,9 @@ data class StaffUserDoc(
     val canViewCaisse: Boolean = false,
     val canManageUsers: Boolean = false,
     val active: Boolean = true,
+    val phone: String = "",
+    val canViewPrixAchat: Boolean? = null,
+    val canModifyPrices: Boolean? = null,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 ) {
@@ -513,7 +536,10 @@ data class StaffUserDoc(
         canViewSuppliers = canViewSuppliers,
         canViewCaisse = canViewCaisse,
         canManageUsers = canManageUsers,
-        active = active
+        active = active,
+        phone = phone,
+        canViewPrixAchat = canViewPrixAchat ?: (role == "admin" || role == "gerant"),
+        canModifyPrices = canModifyPrices ?: (role == "admin" || role == "gerant")
     )
 
     companion object {
@@ -531,6 +557,63 @@ data class StaffUserDoc(
             canViewCaisse = u.canViewCaisse,
             canManageUsers = u.canManageUsers,
             active = u.active,
+            phone = u.phone,
+            canViewPrixAchat = u.canViewPrixAchat,
+            canModifyPrices = u.canModifyPrices,
+            createdAt = createdAt,
+            updatedAt = updatedAt
+        )
+    }
+}
+
+@IgnoreExtraProperties
+data class RolePolicyDoc(
+    @DocumentId val id: String = "vendeur",
+    val roleId: String = "vendeur",
+    val displayName: String = "",
+    val description: String = "",
+    val canViewPrixAchat: Boolean = false,
+    val canModifyPrices: Boolean = false,
+    val canModifyStock: Boolean = false,
+    val canEditInvoices: Boolean = true,
+    val canDeleteInvoices: Boolean = false,
+    val canViewSuppliers: Boolean = false,
+    val canViewCaisse: Boolean = false,
+    val canManageUsers: Boolean = false,
+    val allowedTabs: List<String> = listOf("pos", "stock", "invoices", "customers", "calculator"),
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+) {
+    fun toDomain() = RolePolicy(
+        roleId = roleId.ifBlank { id },
+        displayName = displayName,
+        description = description,
+        canViewPrixAchat = canViewPrixAchat,
+        canModifyPrices = canModifyPrices,
+        canModifyStock = canModifyStock,
+        canEditInvoices = canEditInvoices,
+        canDeleteInvoices = canDeleteInvoices,
+        canViewSuppliers = canViewSuppliers,
+        canViewCaisse = canViewCaisse,
+        canManageUsers = canManageUsers,
+        allowedTabs = allowedTabs
+    )
+
+    companion object {
+        fun fromDomain(p: RolePolicy, createdAt: Timestamp? = null, updatedAt: Timestamp? = null) = RolePolicyDoc(
+            id = p.roleId,
+            roleId = p.roleId,
+            displayName = p.displayName,
+            description = p.description,
+            canViewPrixAchat = p.canViewPrixAchat,
+            canModifyPrices = p.canModifyPrices,
+            canModifyStock = p.canModifyStock,
+            canEditInvoices = p.canEditInvoices,
+            canDeleteInvoices = p.canDeleteInvoices,
+            canViewSuppliers = p.canViewSuppliers,
+            canViewCaisse = p.canViewCaisse,
+            canManageUsers = p.canManageUsers,
+            allowedTabs = p.allowedTabs,
             createdAt = createdAt,
             updatedAt = updatedAt
         )
@@ -594,6 +677,18 @@ data class DepotNotificationDoc(
 }
 
 @IgnoreExtraProperties
+data class WaRecipientDoc(
+    val name: String = "",
+    val phone: String = ""
+) {
+    fun toDomain() = WaRecipient(name = name, phone = phone)
+
+    companion object {
+        fun fromDomain(r: WaRecipient) = WaRecipientDoc(name = r.name, phone = r.phone)
+    }
+}
+
+@IgnoreExtraProperties
 data class StoreInfoDoc(
     @DocumentId val id: String = "default",
     val nom: String = "",
@@ -607,6 +702,8 @@ data class StoreInfoDoc(
     val nif: String = "",
     val nis: String = "",
     val ai: String = "",
+    val invoiceWaRecipients: List<WaRecipientDoc> = emptyList(),
+    val dispoWaRecipients: List<WaRecipientDoc> = emptyList(),
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 ) {
@@ -621,7 +718,9 @@ data class StoreInfoDoc(
         rc = rc,
         nif = nif,
         nis = nis,
-        ai = ai
+        ai = ai,
+        invoiceWaRecipients = if (invoiceWaRecipients.isEmpty()) com.example.data.model.PosSeeds.DEFAULT_INVOICE_WA_RECIPIENTS else invoiceWaRecipients.map { it.toDomain() },
+        dispoWaRecipients = if (dispoWaRecipients.isEmpty()) com.example.data.model.PosSeeds.DEFAULT_DISPO_WA_RECIPIENTS else dispoWaRecipients.map { it.toDomain() }
     )
 
     companion object {
@@ -638,6 +737,8 @@ data class StoreInfoDoc(
             nif = s.nif,
             nis = s.nis,
             ai = s.ai,
+            invoiceWaRecipients = s.invoiceWaRecipients.map { WaRecipientDoc.fromDomain(it) },
+            dispoWaRecipients = s.dispoWaRecipients.map { WaRecipientDoc.fromDomain(it) },
             createdAt = createdAt,
             updatedAt = updatedAt
         )
@@ -650,10 +751,12 @@ data class AppSettingsDoc(
     val printFormat: String = "A4",
     val a5Density: String = "compact",
     val hideBainTeinteFacture: Boolean = true,
-    val colorTheme: String = "ceramic_blue",
+    val colorTheme: String = "ceramica_showroom",
     val touchFriendlyMode: Boolean = true,
     val activeStore: String = "Depot Remchi",
     val enableSoundAlerts: Boolean = true,
+    val deviceSellerName: String = "",
+    val deviceSellerPhone: String = "",
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 ) {
@@ -664,7 +767,9 @@ data class AppSettingsDoc(
         colorTheme = colorTheme,
         touchFriendlyMode = touchFriendlyMode,
         activeStore = activeStore,
-        enableSoundAlerts = enableSoundAlerts
+        enableSoundAlerts = enableSoundAlerts,
+        deviceSellerName = deviceSellerName,
+        deviceSellerPhone = deviceSellerPhone
     )
 
     companion object {
@@ -677,6 +782,8 @@ data class AppSettingsDoc(
             touchFriendlyMode = s.touchFriendlyMode,
             activeStore = s.activeStore,
             enableSoundAlerts = s.enableSoundAlerts,
+            deviceSellerName = s.deviceSellerName,
+            deviceSellerPhone = s.deviceSellerPhone,
             createdAt = createdAt,
             updatedAt = updatedAt
         )

@@ -1,6 +1,8 @@
 package com.example.ui.components
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,12 +15,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -38,8 +42,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -51,6 +58,8 @@ import com.example.ui.theme.Amber500
 import com.example.ui.theme.Amber950
 import com.example.ui.theme.Cyan400
 import com.example.ui.theme.Cyan500
+import com.example.ui.theme.Navy800
+import com.example.ui.theme.Navy900
 import com.example.ui.theme.Navy950
 import com.example.ui.theme.OnDark
 import com.example.ui.theme.Rose400
@@ -79,7 +88,7 @@ fun Modifier.dismissKeypadOnTextFocus(onDismissKeypad: () -> Unit): Modifier {
 
 /**
  * Phone-friendly OutlinedTextField with instant clear button (✕),
- * optional auto-clear of placeholder defaults on focus, and high-contrast Navy/Ice styling.
+ * optional auto-clear of placeholder defaults on focus, and high-contrast modern styling.
  */
 @Composable
 fun ClearableOutlinedTextField(
@@ -125,13 +134,13 @@ fun ClearableOutlinedTextField(
         keyboardOptions = keyboardOptions,
         textStyle = MaterialTheme.typography.bodyLarge.copy(
             color = Slate100,
-            fontWeight = FontWeight.Medium
+            fontWeight = FontWeight.SemiBold
         ),
         colors = OutlinedTextFieldDefaults.colors(
             focusedBorderColor = Cyan500,
             unfocusedBorderColor = Slate700,
             focusedContainerColor = Slate900,
-            unfocusedContainerColor = Slate900,
+            unfocusedContainerColor = Slate850.copy(alpha = 0.65f),
             focusedTextColor = Slate100,
             unfocusedTextColor = Slate100,
             focusedLabelColor = Cyan400,
@@ -154,7 +163,7 @@ fun ClearableOutlinedTextField(
 }
 
 /**
- * Non-IME clickable numeric display field.
+ * Elevated Non-IME clickable numeric display field with active dot badge & shadow depth.
  * Uses Surface + Row + Text (never TextField/BasicTextField), so Android's system
  * soft keyboard NEVER pops up when tapping a numeric field.
  */
@@ -169,48 +178,89 @@ fun NumericDisplayField(
     placeholder: String = "0",
     accentColor: Color = Cyan500,
     onClear: (() -> Unit)? = null,
+    enabled: Boolean = true,
     testTag: String = "numeric_field"
 ) {
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val haptics = LocalHapticFeedback.current
+    val effectiveActive = isActive && enabled
+    val bgColor by animateColorAsState(
+        targetValue = when {
+            !enabled -> Slate950
+            effectiveActive -> Slate900
+            else -> Slate850
+        },
+        label = "numeric_bg"
+    )
+    val borderColor by animateColorAsState(
+        targetValue = when {
+            !enabled -> Slate800.copy(alpha = 0.65f)
+            effectiveActive -> accentColor
+            else -> Slate800
+        },
+        label = "numeric_border"
+    )
 
     Surface(
         modifier = modifier
             .minimumInteractiveComponentSize()
-            .clip(RoundedCornerShape(14.dp))
-            .clickable {
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(enabled = enabled) {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 focusManager.clearFocus(force = true)
                 keyboardController?.hide()
                 onSelect()
             }
             .testTag(testTag),
-        shape = RoundedCornerShape(14.dp),
-        color = if (isActive) Slate900 else Slate850,
+        shape = RoundedCornerShape(16.dp),
+        color = bgColor,
         border = BorderStroke(
-            width = if (isActive) 2.5.dp else 1.dp,
-            color = if (isActive) accentColor else Slate700
-        )
+            width = if (effectiveActive) 2.dp else 1.2.dp,
+            color = borderColor
+        ),
+        shadowElevation = if (effectiveActive) 4.dp else 0.dp
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp)
+                .padding(horizontal = 13.dp, vertical = 10.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (isActive) accentColor else Slate400,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier.weight(1f)
-                )
-                if (isActive && value.isNotEmpty() && onClear != null) {
+                ) {
+                    if (effectiveActive) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(accentColor)
+                        )
+                    }
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (effectiveActive) accentColor else Slate400,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (!enabled) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = "Verrouillé",
+                        tint = Slate400,
+                        modifier = Modifier.size(15.dp)
+                    )
+                } else if (effectiveActive && value.isNotEmpty() && onClear != null) {
                     Icon(
                         imageVector = Icons.Default.Clear,
                         contentDescription = "Effacer",
@@ -222,7 +272,7 @@ fun NumericDisplayField(
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(3.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Bottom,
@@ -231,8 +281,9 @@ fun NumericDisplayField(
                 Text(
                     text = value.ifEmpty { placeholder },
                     style = MaterialTheme.typography.titleLarge.copy(
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Black
+                        fontSize = 21.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 0.2.sp
                     ),
                     color = if (value.isEmpty()) Slate400 else Slate100,
                     maxLines = 1,
@@ -241,12 +292,18 @@ fun NumericDisplayField(
                 )
                 if (suffix.isNotEmpty()) {
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = suffix,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (isActive) accentColor else Slate400,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isActive) accentColor.copy(alpha = 0.14f) else Slate800.copy(alpha = 0.7f)
+                    ) {
+                        Text(
+                            text = suffix,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (isActive) accentColor else Slate400,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                        )
+                    }
                 }
             }
         }
@@ -317,41 +374,48 @@ fun NonImeNumericKeypad(
     accentColor: Color = Cyan500,
     modifier: Modifier = Modifier
 ) {
+    val haptics = LocalHapticFeedback.current
+
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .testTag("in_app_numeric_keypad"),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(22.dp),
         color = Navy950,
-        border = BorderStroke(1.5.dp, Slate700),
-        tonalElevation = 4.dp
+        border = BorderStroke(1.5.dp, Navy800),
+        shadowElevation = 8.dp
     ) {
         Column(
-            modifier = Modifier.padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            modifier = Modifier
+                .background(Brush.verticalGradient(listOf(Navy950, Navy900)))
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp)
         ) {
             if (quickChips.isNotEmpty() && onQuickDelta != null) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
                     quickChips.forEach { (label, delta) ->
                         Surface(
                             modifier = Modifier
                                 .weight(1f)
                                 .height(42.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable { onQuickDelta(delta) }
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onQuickDelta(delta)
+                                }
                                 .testTag("keypad_chip_${label.replace("+", "plus_")}"),
-                            shape = RoundedCornerShape(10.dp),
-                            color = Amber950,
-                            border = BorderStroke(1.dp, Amber500)
+                            shape = RoundedCornerShape(12.dp),
+                            color = Navy800,
+                            border = BorderStroke(1.dp, accentColor.copy(alpha = 0.65f))
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Text(
                                     text = label,
                                     style = MaterialTheme.typography.labelLarge,
-                                    color = Amber300,
+                                    color = OnDark,
                                     fontWeight = FontWeight.Black
                                 )
                             }
@@ -378,7 +442,10 @@ fun NonImeNumericKeypad(
                             KeypadKeyButton(
                                 key = key,
                                 isAction = isAction,
-                                onClick = { onKeyPress(key) },
+                                onClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onKeyPress(key)
+                                },
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -386,33 +453,42 @@ fun NonImeNumericKeypad(
                         KeypadKeyButton(
                             key = "0",
                             isAction = false,
-                            onClick = { onKeyPress("0") },
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onKeyPress("0")
+                            },
                             modifier = Modifier.weight(1f)
                         )
                         if (onValidate != null) {
                             Button(
-                                onClick = onValidate,
+                                onClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onValidate()
+                                },
                                 modifier = Modifier
                                     .weight(3f)
-                                    .height(54.dp)
+                                    .height(56.dp)
                                     .testTag("keypad_validate_btn"),
-                                shape = RoundedCornerShape(14.dp),
+                                shape = RoundedCornerShape(16.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = accentColor,
                                     contentColor = OnDark
                                 ),
-                                contentPadding = PaddingValues(horizontal = 12.dp)
+                                elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Check,
                                     contentDescription = validateLabel,
                                     modifier = Modifier.size(20.dp)
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
+                                Spacer(modifier = Modifier.width(7.dp))
                                 Text(
                                     text = validateLabel,
                                     style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Black
+                                    fontWeight = FontWeight.Black,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         } else {
@@ -420,6 +496,7 @@ fun NonImeNumericKeypad(
                                 key = "00",
                                 isAction = false,
                                 onClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     onKeyPress("0")
                                     onKeyPress("0")
                                 },
@@ -452,21 +529,22 @@ private fun KeypadKeyButton(
         else -> Slate100
     }
     val borderColor = when (key) {
-        "C" -> Rose500
-        "⌫" -> Amber500
+        "C" -> Rose500.copy(alpha = 0.65f)
+        "⌫" -> Amber500.copy(alpha = 0.65f)
         else -> Slate700
     }
 
     Surface(
         modifier = modifier
-            .height(54.dp)
+            .height(56.dp)
             .minimumInteractiveComponentSize()
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onClick)
             .testTag("keypad_key_$key"),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(16.dp),
         color = bg,
-        border = BorderStroke(1.dp, borderColor)
+        border = BorderStroke(1.2.dp, borderColor),
+        shadowElevation = 2.dp
     ) {
         Box(contentAlignment = Alignment.Center) {
             if (key == "⌫") {
@@ -480,7 +558,7 @@ private fun KeypadKeyButton(
                 Text(
                     text = key,
                     style = MaterialTheme.typography.titleLarge.copy(
-                        fontSize = if (isAction) 17.sp else 21.sp,
+                        fontSize = if (isAction) 17.sp else 22.sp,
                         fontWeight = FontWeight.Black
                     ),
                     color = fg

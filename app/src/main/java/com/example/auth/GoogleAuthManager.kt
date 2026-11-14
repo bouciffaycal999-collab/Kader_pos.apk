@@ -119,6 +119,9 @@ object GoogleAuthManager {
             signInWithGoogleCredential(result.credential, firebaseAuth)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: NoCredentialException) {
+            Log.w(TAG, "No Google account available for sign-in: ${e.message}", e)
+            AuthAttemptResult.NoSavedCredential
         } catch (e: GetCredentialCancellationException) {
             Log.w(TAG, "Google Sign-In cancelled or dismissed: ${e.message}", e)
             AuthAttemptResult.Cancelled
@@ -149,10 +152,11 @@ object GoogleAuthManager {
         scope.launch {
             withContext(NonCancellable) {
                 try {
-                    auth?.signOut()
                     credentialManager.clearCredentialState(ClearCredentialStateRequest())
                 } catch (e: Exception) {
-                    Log.e(TAG, "Sign-out failed", e)
+                    Log.w(TAG, "Failed to clear credential state: ${e.message}")
+                } finally {
+                    auth?.signOut()
                 }
             }
         }

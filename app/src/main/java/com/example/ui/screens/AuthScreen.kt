@@ -112,7 +112,7 @@ fun AuthScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Layers,
-                            contentDescription = "Kader Ceramic Logo",
+                            contentDescription = "CERAMICA Logo",
                             tint = Amber500,
                             modifier = Modifier.size(48.dp)
                         )
@@ -121,7 +121,7 @@ fun AuthScreen(
 
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "KADER CERAMIC POS",
+                        text = "CERAMICA POS",
                         style = MaterialTheme.typography.headlineMedium,
                         color = Navy950,
                         fontWeight = FontWeight.Black,
@@ -160,7 +160,7 @@ fun AuthScreen(
                             Icon(Icons.Default.Security, contentDescription = null, tint = Amber500, modifier = Modifier.size(22.dp))
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "Accès vendeur et patron sécurisé par Nom + Code PIN (Patron: 1234 • Vendeur: 1111).",
+                                text = "Accès Direction, Gérants et Vendeurs sécurisé par Nom + Code PIN.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Slate400
                             )

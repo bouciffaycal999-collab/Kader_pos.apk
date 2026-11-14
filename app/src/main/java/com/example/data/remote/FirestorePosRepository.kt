@@ -7,6 +7,8 @@ import com.example.data.model.Customer
 import com.example.data.model.DailyCaisseCount
 import com.example.data.model.DepotNotification
 import com.example.data.model.Invoice
+import com.example.data.model.PosSeeds
+import com.example.data.model.RolePolicy
 import com.example.data.model.StaffUser
 import com.example.data.model.StoreInfo
 import com.example.data.model.Supplier
@@ -17,6 +19,7 @@ import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Source
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -56,11 +59,18 @@ class FirestorePosRepository(private val db: FirebaseFirestore) {
 
     private suspend fun resolveCreatedAt(docRef: DocumentReference): Timestamp? {
         createdAtCache[docRef.path]?.let { return it }
-        val snap = docRef.get().await()
+        val snap = runCatching { docRef.get(Source.CACHE).await() }.getOrNull()
+            ?.takeIf { it.exists() }
+            ?: runCatching { docRef.get().await() }.getOrNull()
+            ?: return null
         if (!snap.exists()) return null
         val ts = snap.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
         cacheCreatedAt(docRef.path, ts)
         return ts
+    }
+
+    suspend fun waitForPendingWrites() {
+        db.waitForPendingWrites().await()
     }
 
     // --- Account bootstrap ---
@@ -117,6 +127,14 @@ class FirestorePosRepository(private val db: FirebaseFirestore) {
             }.sortedByDescending { it.date }
         }.flowOn(Dispatchers.Default)
 
+    fun observeInvoiceById(userId: String, invoiceId: String): Flow<Invoice?> =
+        col(userId, "invoices").document(invoiceId).snapshots().map { doc ->
+            if (!doc.exists()) null
+            else doc.toObject(InvoiceDoc::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                ?.also { cacheCreatedAt(doc.reference.path, it.createdAt) }
+                ?.toDomain()
+        }.flowOn(Dispatchers.Default)
+
     fun observeCustomers(userId: String): Flow<List<Customer>> =
         col(userId, "customers").snapshots().map { snap ->
             snap.documents.mapNotNull { doc ->
@@ -163,6 +181,20 @@ class FirestorePosRepository(private val db: FirebaseFirestore) {
                 val obj = doc.toObject(StaffUserDoc::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
                 obj?.also { cacheCreatedAt(doc.reference.path, it.createdAt) }?.toDomain()
             }.sortedBy { it.name }
+        }.flowOn(Dispatchers.Default)
+
+    fun observeRolePolicies(userId: String): Flow<List<RolePolicy>> =
+        col(userId, "role_policies").snapshots().map { snap ->
+            snap.documents.mapNotNull { doc ->
+                val obj = doc.toObject(RolePolicyDoc::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                obj?.also { cacheCreatedAt(doc.reference.path, it.createdAt) }?.toDomain()
+            }.sortedBy { policy ->
+                when (policy.roleId) {
+                    "admin" -> 0
+                    "gerant" -> 1
+                    else -> 2
+                }
+            }
         }.flowOn(Dispatchers.Default)
 
     fun observeNotifications(userId: String): Flow<List<DepotNotification>> =
@@ -220,9 +252,17 @@ class FirestorePosRepository(private val db: FirebaseFirestore) {
         suppliers: List<Supplier>,
         caisseMovements: List<CaisseMovement>,
         storeInfo: StoreInfo,
-        settings: AppSettings
+        settings: AppSettings,
+        rolePolicies: List<RolePolicy> = PosSeeds.DEFAULT_ROLE_POLICIES
     ) = withContext(Dispatchers.IO) {
         try {
+            if (col(userId, "role_policies").limit(1).get().await().isEmpty && rolePolicies.isNotEmpty()) {
+                val batch = db.batch()
+                rolePolicies.forEach { policy ->
+                    batch.set(col(userId, "role_policies").document(policy.roleId), RolePolicyDoc.fromDomain(policy))
+                }
+                batch.commit().await()
+            }
             if (col(userId, "staff_users").limit(1).get().await().isEmpty && staffUsers.isNotEmpty()) {
                 val batch = db.batch()
                 staffUsers.forEach { u ->
@@ -319,6 +359,98 @@ class FirestorePosRepository(private val db: FirebaseFirestore) {
         }
     }
 
+    suspend fun mergeMissingOfflineData(
+        userId: String,
+        products: List<TileProduct>,
+        customers: List<Customer>,
+        suppliers: List<Supplier>,
+        invoices: List<Invoice>,
+        caisseMovements: List<CaisseMovement>,
+        supplierMovements: List<SupplierMovement>,
+        dailyCaisseCounts: List<DailyCaisseCount>,
+        notifications: List<DepotNotification>
+    ) = withContext(Dispatchers.IO) {
+        try {
+            if (products.isNotEmpty()) {
+                val remoteIds = col(userId, "products").get().await().documents.mapTo(HashSet()) { it.id }
+                val missing = products.filter { it.id !in remoteIds }
+                missing.chunked(250).forEach { chunk ->
+                    val batch = db.batch()
+                    chunk.forEach { p -> batch.set(col(userId, "products").document(p.id), TileProductDoc.fromDomain(p)) }
+                    batch.commit().await()
+                }
+            }
+            if (customers.isNotEmpty()) {
+                val remoteIds = col(userId, "customers").get().await().documents.mapTo(HashSet()) { it.id }
+                val missing = customers.filter { it.id !in remoteIds }
+                missing.chunked(250).forEach { chunk ->
+                    val batch = db.batch()
+                    chunk.forEach { c -> batch.set(col(userId, "customers").document(c.id), CustomerDoc.fromDomain(c)) }
+                    batch.commit().await()
+                }
+            }
+            if (suppliers.isNotEmpty()) {
+                val remoteIds = col(userId, "suppliers").get().await().documents.mapTo(HashSet()) { it.id }
+                val missing = suppliers.filter { it.id !in remoteIds }
+                missing.chunked(250).forEach { chunk ->
+                    val batch = db.batch()
+                    chunk.forEach { s -> batch.set(col(userId, "suppliers").document(s.id), SupplierDoc.fromDomain(s)) }
+                    batch.commit().await()
+                }
+            }
+            if (invoices.isNotEmpty()) {
+                val remoteIds = col(userId, "invoices").get().await().documents.mapTo(HashSet()) { it.id }
+                val missing = invoices.filter { it.id !in remoteIds }
+                missing.chunked(250).forEach { chunk ->
+                    val batch = db.batch()
+                    chunk.forEach { inv -> batch.set(col(userId, "invoices").document(inv.id), InvoiceDoc.fromDomain(inv)) }
+                    batch.commit().await()
+                }
+            }
+            if (caisseMovements.isNotEmpty()) {
+                val remoteIds = col(userId, "caisse_movements").get().await().documents.mapTo(HashSet()) { it.id }
+                val missing = caisseMovements.filter { it.id !in remoteIds }
+                missing.chunked(250).forEach { chunk ->
+                    val batch = db.batch()
+                    chunk.forEach { m -> batch.set(col(userId, "caisse_movements").document(m.id), CaisseMovementDoc.fromDomain(m)) }
+                    batch.commit().await()
+                }
+            }
+            if (supplierMovements.isNotEmpty()) {
+                val remoteIds = col(userId, "supplier_movements").get().await().documents.mapTo(HashSet()) { it.id }
+                val missing = supplierMovements.filter { it.id !in remoteIds }
+                missing.chunked(250).forEach { chunk ->
+                    val batch = db.batch()
+                    chunk.forEach { sm -> batch.set(col(userId, "supplier_movements").document(sm.id), SupplierMovementDoc.fromDomain(sm)) }
+                    batch.commit().await()
+                }
+            }
+            if (dailyCaisseCounts.isNotEmpty()) {
+                val remoteIds = col(userId, "daily_caisse_counts").get().await().documents.mapTo(HashSet()) { it.id }
+                val missing = dailyCaisseCounts.filter { it.id !in remoteIds }
+                missing.chunked(250).forEach { chunk ->
+                    val batch = db.batch()
+                    chunk.forEach { cnt -> batch.set(col(userId, "daily_caisse_counts").document(cnt.id), DailyCaisseCountDoc.fromDomain(cnt)) }
+                    batch.commit().await()
+                }
+            }
+            if (notifications.isNotEmpty()) {
+                val remoteIds = col(userId, "notifications").get().await().documents.mapTo(HashSet()) { it.id }
+                val missing = notifications.filter { it.id !in remoteIds }
+                missing.chunked(250).forEach { chunk ->
+                    val batch = db.batch()
+                    chunk.forEach { n -> batch.set(col(userId, "notifications").document(n.id), DepotNotificationDoc.fromDomain(n)) }
+                    batch.commit().await()
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, userDoc(userId).path)
+            throw e
+        }
+    }
+
     // --- Products ---
 
     suspend fun upsertProduct(userId: String, product: TileProduct) {
@@ -347,6 +479,141 @@ class FirestorePosRepository(private val db: FirebaseFirestore) {
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            throw e
+        }
+    }
+
+    suspend fun adjustProductStockDelta(
+        userId: String,
+        productId: String,
+        delta: Int,
+        fallbackProduct: TileProduct? = null
+    ) {
+        if (delta == 0) return
+        val docRef = col(userId, "products").document(productId)
+        try {
+            docRef.update(
+                mapOf(
+                    "stock" to FieldValue.increment(delta.toLong()),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val root = e.unwrapFirestoreException()
+            if (root?.code == com.google.firebase.firestore.FirebaseFirestoreException.Code.NOT_FOUND && fallbackProduct != null) {
+                upsertProduct(userId, fallbackProduct)
+                return
+            }
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            throw e
+        }
+    }
+
+    suspend fun commitSaleBatch(
+        userId: String,
+        invoice: Invoice,
+        stockDeltas: Map<String, Int>,
+        updatedProductStocks: Map<String, Int>,
+        caisseMovement: CaisseMovement?,
+        updatedCustomer: Customer?,
+        notifications: List<DepotNotification>,
+        fallbackProductsById: Map<String, TileProduct> = emptyMap(),
+        isEdit: Boolean = false
+    ) {
+        val invRef = col(userId, "invoices").document(invoice.id)
+        try {
+            val invCreatedAt = if (isEdit) resolveCreatedAt(invRef) else null
+            val custRef = updatedCustomer?.let { col(userId, "customers").document(it.id) }
+            val custCreatedAt = custRef?.let { resolveCreatedAt(it) }
+
+            val batch = db.batch()
+            batch.set(invRef, InvoiceDoc.fromDomain(invoice, createdAt = invCreatedAt, updatedAt = null))
+
+            stockDeltas.forEach { (prodId, delta) ->
+                if (delta != 0) {
+                    val prodRef = col(userId, "products").document(prodId)
+                    batch.update(
+                        prodRef,
+                        mapOf(
+                            "stock" to FieldValue.increment(delta.toLong()),
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    )
+                }
+            }
+
+            caisseMovement?.let { mov ->
+                batch.set(col(userId, "caisse_movements").document(mov.id), CaisseMovementDoc.fromDomain(mov))
+            }
+            if (custRef != null && updatedCustomer != null) {
+                batch.set(custRef, CustomerDoc.fromDomain(updatedCustomer, createdAt = custCreatedAt, updatedAt = null))
+            }
+            notifications.forEach { n ->
+                batch.set(col(userId, "notifications").document(n.id), DepotNotificationDoc.fromDomain(n))
+            }
+            batch.commit().await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val root = e.unwrapFirestoreException()
+            if (root?.code == com.google.firebase.firestore.FirebaseFirestoreException.Code.NOT_FOUND) {
+                // Fallback if a product sold was created offline and not yet in Firestore
+                upsertInvoice(userId, invoice)
+                stockDeltas.forEach { (prodId, delta) ->
+                    val fallback = fallbackProductsById[prodId]?.let { prod ->
+                        updatedProductStocks[prodId]?.let { newStk -> prod.copy(stock = newStk) } ?: prod
+                    }
+                    adjustProductStockDelta(userId, prodId, delta, fallback)
+                }
+                caisseMovement?.let { createCaisseMovement(userId, it) }
+                updatedCustomer?.let { upsertCustomer(userId, it) }
+                notifications.forEach { createNotification(userId, it) }
+                return
+            }
+            handleFirestoreError(e, OperationType.WRITE, invRef.path)
+            throw e
+        }
+    }
+
+    suspend fun commitDeleteInvoiceBatch(
+        userId: String,
+        invoiceId: String,
+        restoredStockDeltas: Map<String, Int>,
+        updatedCustomer: Customer?,
+        notification: DepotNotification?
+    ) {
+        val invRef = col(userId, "invoices").document(invoiceId)
+        try {
+            val custRef = updatedCustomer?.let { col(userId, "customers").document(it.id) }
+            val custCreatedAt = custRef?.let { resolveCreatedAt(it) }
+
+            val batch = db.batch()
+            batch.delete(invRef)
+            restoredStockDeltas.forEach { (prodId, delta) ->
+                if (delta != 0) {
+                    batch.update(
+                        col(userId, "products").document(prodId),
+                        mapOf(
+                            "stock" to FieldValue.increment(delta.toLong()),
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    )
+                }
+            }
+            if (custRef != null && updatedCustomer != null) {
+                batch.set(custRef, CustomerDoc.fromDomain(updatedCustomer, createdAt = custCreatedAt, updatedAt = null))
+            }
+            notification?.let { n ->
+                batch.set(col(userId, "notifications").document(n.id), DepotNotificationDoc.fromDomain(n))
+            }
+            batch.commit().await()
+            createdAtCache.remove(invRef.path)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, invRef.path)
             throw e
         }
     }
@@ -403,6 +670,40 @@ class FirestorePosRepository(private val db: FirebaseFirestore) {
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.GET, docRef.path)
+            throw e
+        }
+    }
+
+    suspend fun markInvoiceWhatsappSent(userId: String, invoiceId: String) {
+        val docRef = col(userId, "invoices").document(invoiceId)
+        try {
+            docRef.update(
+                mapOf(
+                    "whatsappSentBeforePrint" to true,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            throw e
+        }
+    }
+
+    suspend fun updateInvoiceHidePrices(userId: String, invoiceId: String, hide: Boolean) {
+        val docRef = col(userId, "invoices").document(invoiceId)
+        try {
+            docRef.update(
+                mapOf(
+                    "hidePrices" to hide,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
             throw e
         }
     }
@@ -512,6 +813,21 @@ class FirestorePosRepository(private val db: FirebaseFirestore) {
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.DELETE, docRef.path)
+            throw e
+        }
+    }
+
+    // --- Role Policies ---
+
+    suspend fun upsertRolePolicy(userId: String, policy: RolePolicy) {
+        val docRef = col(userId, "role_policies").document(policy.roleId)
+        try {
+            val createdAt = resolveCreatedAt(docRef)
+            docRef.set(RolePolicyDoc.fromDomain(policy, createdAt = createdAt, updatedAt = null)).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, docRef.path)
             throw e
         }
     }

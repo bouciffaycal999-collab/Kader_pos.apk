@@ -39,16 +39,21 @@ import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.ShoppingCart
+import androidx.compose.material.icons.filled.TableRows
 import androidx.compose.material.icons.filled.Warehouse
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -78,6 +83,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.CartItem
@@ -86,12 +92,14 @@ import com.example.data.model.FreeLineItem
 import com.example.data.model.Invoice
 import com.example.data.model.InvoiceClient
 import com.example.data.model.PosSeeds
+import com.example.data.model.StoreInfo
 import com.example.data.model.TileCalculatorMath
 import com.example.data.model.TileDimensionUnit
 import com.example.data.model.TileProduct
 import com.example.data.model.formatDa
 import com.example.data.model.formatM2
 import com.example.ui.components.ClearableOutlinedTextField
+import com.example.ui.components.DispoDepotRecipientsDialog
 import com.example.ui.components.NonImeNumericKeypad
 import com.example.ui.components.NumericDisplayField
 import com.example.ui.components.ProductPhotoLightboxDialog
@@ -113,6 +121,7 @@ import com.example.ui.theme.Emerald950
 import com.example.ui.theme.Navy800
 import com.example.ui.theme.Navy950
 import com.example.ui.theme.OnDark
+import com.example.ui.theme.PosNumericTextStyle
 import com.example.ui.theme.Rose400
 import com.example.ui.theme.Rose500
 import com.example.ui.theme.Rose950
@@ -143,7 +152,9 @@ fun PosScreen(
     cart: List<CartItem>,
     freeLines: List<FreeLineItem>,
     customers: List<Customer>,
+    storeInfo: StoreInfo = PosSeeds.DEFAULT_STORE_INFO,
     editingInvoice: Invoice?,
+    canModifyPrices: Boolean = true,
     onOpenCalculatorForProduct: (TileProduct) -> Unit,
     onRequestDepotDispo: (TileProduct) -> Unit,
     onOpenOneTimeProduct: () -> Unit,
@@ -163,6 +174,7 @@ fun PosScreen(
     var selectedDimension by remember { mutableStateOf("Toutes") }
     var selectedChoix by remember { mutableStateOf("Tous") }
     var onlyInStock by remember { mutableStateOf(false) }
+    var isGridView by remember { mutableStateOf(true) }
 
     var showCartSheet by remember { mutableStateOf(false) }
     var reopenCartSheetAfterDialog by remember { mutableStateOf(false) }
@@ -171,6 +183,10 @@ fun PosScreen(
     var quickEditCartItem by remember { mutableStateOf<CartItem?>(null) }
     var showCheckoutDialog by remember { mutableStateOf(false) }
     var previewProduct by remember { mutableStateOf<TileProduct?>(null) }
+    var dispoTargetProduct by remember { mutableStateOf<TileProduct?>(null) }
+
+    val hasActiveFilter = searchQuery.isNotBlank() || onlyInStock ||
+        selectedChoix != "Tous" || selectedUsine != "Toutes" || selectedDimension != "Toutes"
 
     val inStockCount = remember(products) { products.count { it.stock > 0 } }
     val usines = remember(products) {
@@ -203,12 +219,12 @@ fun PosScreen(
 
         Row(modifier = Modifier.fillMaxSize()) {
             // Main Catalog Pane
-            Box(
+            Column(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
             ) {
-                Column(modifier = Modifier.fillMaxSize()) {
+                Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     // Search + Quick Actions + Filter Strip
                     Surface(
                         color = Slate900,
@@ -242,6 +258,100 @@ fun PosScreen(
                                         )
                                         TextButton(onClick = onClearCart) {
                                             Text("Annuler", color = Rose400, fontWeight = FontWeight.Black)
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Showroom Catalog Header Strip: Count + View Switch (Grille / Liste)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = "Catalogue Showroom",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = Navy950,
+                                        fontWeight = FontWeight.Black
+                                    )
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Cyan950,
+                                        border = BorderStroke(1.dp, Cyan500.copy(alpha = 0.35f))
+                                    ) {
+                                        Text(
+                                            text = "${filteredProducts.size} / ${products.size}",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = Cyan400,
+                                            fontWeight = FontWeight.Black,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                    if (hasActiveFilter) {
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = Amber950,
+                                            border = BorderStroke(1.dp, Amber500.copy(alpha = 0.45f)),
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .clickable {
+                                                    searchQuery = ""
+                                                    selectedUsine = "Toutes"
+                                                    selectedDimension = "Toutes"
+                                                    selectedChoix = "Tous"
+                                                    onlyInStock = false
+                                                }
+                                                .testTag("pos_reset_filters_btn")
+                                        ) {
+                                            Text(
+                                                text = "Réinit.",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = Amber300,
+                                                fontWeight = FontWeight.Black,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Slate950,
+                                    border = BorderStroke(1.dp, Slate800)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Surface(
+                                            shape = RoundedCornerShape(9.dp),
+                                            color = if (isGridView) Cyan500 else Slate950,
+                                            modifier = Modifier
+                                                .clickable { isGridView = true }
+                                                .testTag("pos_view_grid_btn")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.GridView,
+                                                contentDescription = "Vue Grille",
+                                                tint = if (isGridView) OnDark else Slate400,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp).size(18.dp)
+                                            )
+                                        }
+                                        Surface(
+                                            shape = RoundedCornerShape(9.dp),
+                                            color = if (!isGridView) Cyan500 else Slate950,
+                                            modifier = Modifier
+                                                .clickable { isGridView = false }
+                                                .testTag("pos_view_list_btn")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.TableRows,
+                                                contentDescription = "Vue Liste",
+                                                tint = if (!isGridView) OnDark else Slate400,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp).size(18.dp)
+                                            )
                                         }
                                     }
                                 }
@@ -388,24 +498,40 @@ fun PosScreen(
                                 Text("Essayez d'ajuster les filtres ou créez un Produit 1x.", style = MaterialTheme.typography.bodyMedium, color = Slate400)
                             }
                         }
-                    } else {
+                    } else if (isGridView) {
                         LazyVerticalGrid(
-                            columns = GridCells.Adaptive(minSize = 168.dp),
-                            contentPadding = PaddingValues(
-                                start = 12.dp,
-                                end = 12.dp,
-                                top = 12.dp,
-                                bottom = if (isWide) 16.dp else 104.dp
-                            ),
+                            columns = GridCells.Adaptive(minSize = 172.dp),
+                            contentPadding = PaddingValues(12.dp),
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier.weight(1f).fillMaxWidth().testTag("pos_catalog_grid")
                         ) {
                             items(filteredProducts, key = { it.id }) { product ->
                                 ProductTileCard(
                                     product = product,
                                     onOpenCalculator = { onOpenCalculatorForProduct(product) },
-                                    onCheckDepotDispo = { onRequestDepotDispo(product) },
+                                    onCheckDepotDispo = {
+                                        onRequestDepotDispo(product)
+                                        dispoTargetProduct = product
+                                    },
+                                    onPreviewImage = { previewProduct = product }
+                                )
+                            }
+                        }
+                    } else {
+                        LazyColumn(
+                            contentPadding = PaddingValues(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.weight(1f).fillMaxWidth().testTag("pos_catalog_list")
+                        ) {
+                            items(filteredProducts, key = { it.id }) { product ->
+                                ProductTileListRow(
+                                    product = product,
+                                    onOpenCalculator = { onOpenCalculatorForProduct(product) },
+                                    onCheckDepotDispo = {
+                                        onRequestDepotDispo(product)
+                                        dispoTargetProduct = product
+                                    },
                                     onPreviewImage = { previewProduct = product }
                                 )
                             }
@@ -413,25 +539,24 @@ fun PosScreen(
                     }
                 }
 
-                // Floating Deep Navy Panier Bar on Phones/Medium Screens
+                // Docked Panier Bar on Phones/Medium Screens (never overlaps product card buttons)
                 if (!isWide) {
                     Surface(
                         modifier = Modifier
-                            .align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
                             .clip(RoundedCornerShape(18.dp))
                             .clickable { showCartSheet = true }
                             .testTag("pos_floating_cart_bar"),
                         shape = RoundedCornerShape(18.dp),
-                        color = Navy950,
-                        border = BorderStroke(2.dp, if (totalLinesCount > 0) Amber500 else Cyan500),
-                        tonalElevation = 8.dp
+                        color = Slate900,
+                        border = BorderStroke(1.8.dp, if (totalLinesCount > 0) Amber500 else Cyan500),
+                        tonalElevation = 4.dp
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
@@ -445,23 +570,27 @@ fun PosScreen(
                                         }
                                     }
                                 ) {
-                                    Icon(Icons.Default.ShoppingCart, contentDescription = "Panier", tint = Amber500, modifier = Modifier.size(28.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.ShoppingCart,
+                                        contentDescription = "Panier",
+                                        tint = if (totalLinesCount > 0) Amber500 else Cyan500,
+                                        modifier = Modifier.size(26.dp)
+                                    )
                                 }
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
                                     Text(
                                         text = if (totalLinesCount == 0) "Panier vide" else "$totalLinesCount article(s) • ${cart.sumOf { it.cartons }} Ctn • ${formatM2(cart.sumOf { it.m2Total })} m²",
                                         style = MaterialTheme.typography.labelLarge,
-                                        color = OnDark,
+                                        color = Slate400,
                                         fontWeight = FontWeight.Bold,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
                                         text = formatDa(totalBrut),
-                                        style = MaterialTheme.typography.titleLarge,
-                                        color = Amber500,
-                                        fontWeight = FontWeight.Black
+                                        style = PosNumericTextStyle.copy(fontSize = 19.sp),
+                                        color = Navy950
                                     )
                                 }
                             }
@@ -471,7 +600,7 @@ fun PosScreen(
                             Button(
                                 onClick = { showCartSheet = true },
                                 modifier = Modifier
-                                    .height(48.dp)
+                                    .height(46.dp)
                                     .testTag("pos_open_panier_btn"),
                                 shape = RoundedCornerShape(14.dp),
                                 colors = ButtonDefaults.buttonColors(
@@ -592,6 +721,7 @@ fun PosScreen(
     quickEditCartItem?.let { targetItem ->
         EditCartItemQuickDialog(
             item = targetItem,
+            canModifyPrices = canModifyPrices,
             onDismiss = {
                 quickEditCartItem = null
                 if (reopenCartSheetAfterDialog) {
@@ -648,6 +778,7 @@ fun PosScreen(
             totalBrut = totalBrut,
             customers = customers,
             editingInvoice = editingInvoice,
+            canModifyPrices = canModifyPrices,
             onDismiss = { showCheckoutDialog = false },
             onConfirm = { client, remise, paye, mode, notes ->
                 showCheckoutDialog = false
@@ -660,8 +791,20 @@ fun PosScreen(
         ProductPhotoLightboxDialog(
             product = prod,
             onDismiss = { previewProduct = null },
-            onCheckDepotDispo = { onRequestDepotDispo(prod) },
+            onCheckDepotDispo = {
+                previewProduct = null
+                onRequestDepotDispo(prod)
+                dispoTargetProduct = prod
+            },
             onOpenCalculator = { onOpenCalculatorForProduct(prod) }
+        )
+    }
+
+    dispoTargetProduct?.let { prod ->
+        DispoDepotRecipientsDialog(
+            product = prod,
+            recipients = storeInfo.dispoWaRecipients.ifEmpty { PosSeeds.DEFAULT_DISPO_WA_RECIPIENTS },
+            onDismiss = { dispoTargetProduct = null }
         )
     }
 }
@@ -686,149 +829,357 @@ private fun ProductTileCard(
         else -> Emerald300
     }
 
-    Surface(
+    ElevatedCard(
+        onClick = onOpenCalculator,
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onOpenCalculator)
             .testTag("product_card_${product.id}"),
-        shape = RoundedCornerShape(18.dp),
-        color = Slate900,
-        border = BorderStroke(1.5.dp, Slate800),
-        tonalElevation = 2.dp
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.elevatedCardColors(containerColor = Slate900),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
     ) {
-        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box {
-                TileSwatchImage(
-                    imageUrl = product.image,
-                    colorHex = product.color,
-                    contentDescription = product.name,
+        Surface(
+            color = Slate900,
+            shape = RoundedCornerShape(20.dp),
+            border = BorderStroke(1.dp, Slate800)
+        ) {
+            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box {
+                    TileSwatchImage(
+                        imageUrl = product.image,
+                        colorHex = product.color,
+                        contentDescription = product.name,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(126.dp)
+                            .clickable(onClick = onPreviewImage)
+                            .testTag("product_photo_${product.id}"),
+                        cornerRadius = 14.dp
+                    )
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(6.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        color = Navy950.copy(alpha = 0.92f)
+                    ) {
+                        Text(
+                            text = product.dimension,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = OnDark,
+                            fontWeight = FontWeight.Black,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                        )
+                    }
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        color = stockBadgeBg,
+                        border = BorderStroke(1.dp, stockBadgeFg.copy(alpha = 0.45f))
+                    ) {
+                        Text(
+                            text = if (isOut) "${product.stock} ctn • Libre" else "${product.stock} ctn",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = stockBadgeFg,
+                            fontWeight = FontWeight.Black,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                        )
+                    }
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(6.dp),
+                        shape = RoundedCornerShape(6.dp),
+                        color = Slate900.copy(alpha = 0.92f),
+                        border = BorderStroke(1.dp, Slate800)
+                    ) {
+                        Text(
+                            text = product.finition.replaceFirstChar { it.uppercase() },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Navy950,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "${product.usine} • ${product.choix}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Amber400,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (product.isSoldByPiece) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = Cyan950,
+                                border = BorderStroke(1.dp, Cyan500.copy(alpha = 0.6f))
+                            ) {
+                                Text(
+                                    text = "Pièce",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Cyan300,
+                                    fontWeight = FontWeight.Black,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        text = product.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Slate100,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 2,
+                        minLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Slate950,
+                    border = BorderStroke(1.dp, Slate800)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val primaryPrice = if (product.isSoldByPiece && product.prixPiece > 0.0) {
+                            "${formatDa(product.prixPiece)}/pc"
+                        } else {
+                            "${formatDa(product.prix)}/m²"
+                        }
+                        Text(
+                            text = primaryPrice,
+                            style = PosNumericTextStyle.copy(fontSize = 16.sp),
+                            color = Emerald400
+                        )
+                        Text(
+                            text = "${formatM2(product.m2Carton)} m² • ${product.pcs}p",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Slate400,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Button(
+                    onClick = onOpenCalculator,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(116.dp)
-                        .clickable(onClick = onPreviewImage)
-                        .testTag("product_photo_${product.id}"),
-                    cornerRadius = 14.dp
-                )
-                Surface(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(6.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    color = Navy950.copy(alpha = 0.90f)
+                        .height(48.dp)
+                        .testTag("btn_calc_${product.id}"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Cyan500,
+                        contentColor = OnDark
+                    ),
+                    contentPadding = PaddingValues(horizontal = 8.dp)
                 ) {
+                    Icon(Icons.Default.Calculate, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = product.dimension,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = OnDark,
+                        text = "Calculer & Ajouter",
+                        style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Black,
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                Surface(
+
+                OutlinedButton(
+                    onClick = onCheckDepotDispo,
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(6.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    color = stockBadgeBg,
-                    border = BorderStroke(1.dp, stockBadgeFg.copy(alpha = 0.5f))
+                        .fillMaxWidth()
+                        .height(42.dp)
+                        .testTag("btn_dispo_${product.id}"),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.5.dp, Cyan500.copy(alpha = 0.65f)),
+                    contentPadding = PaddingValues(horizontal = 8.dp)
                 ) {
+                    Icon(Icons.Default.Warehouse, contentDescription = null, tint = Cyan400, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = if (isOut) "Rupture" else "${product.stock} ctn",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = stockBadgeFg,
-                        fontWeight = FontWeight.Black,
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                        text = "Dispo Dépôt",
+                        color = Cyan400,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1
                     )
                 }
             }
+        }
+    }
+}
 
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = "${product.usine} • ${product.choix}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Amber400,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = product.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Slate100,
-                    fontWeight = FontWeight.ExtraBold,
-                    maxLines = 2,
-                    minLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+@Composable
+private fun ProductTileListRow(
+    product: TileProduct,
+    onOpenCalculator: () -> Unit,
+    onCheckDepotDispo: () -> Unit,
+    onPreviewImage: () -> Unit
+) {
+    val isLow = product.stock in 1..5
+    val isOut = product.stock <= 0
+    val stockBg = when {
+        isOut -> Rose950
+        isLow -> Amber950
+        else -> Emerald950
+    }
+    val stockFg = when {
+        isOut -> Rose400
+        isLow -> Amber300
+        else -> Emerald300
+    }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Bottom
+    ElevatedCard(
+        onClick = onOpenCalculator,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("product_card_${product.id}"),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.elevatedCardColors(containerColor = Slate900),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
+    ) {
+        Surface(
+            color = Slate900,
+            shape = RoundedCornerShape(18.dp),
+            border = BorderStroke(1.dp, Slate800)
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Column {
-                    Text(
-                        text = "${formatDa(product.prix)}/m²",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Emerald400,
-                        fontWeight = FontWeight.Black
-                    )
-                    Text(
-                        text = "${formatM2(product.m2Carton)} m²/ctn • ${product.pcs} pcs",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = Slate400,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box {
+                        TileSwatchImage(
+                            imageUrl = product.image,
+                            colorHex = product.color,
+                            contentDescription = product.name,
+                            modifier = Modifier
+                                .size(76.dp)
+                                .clickable(onClick = onPreviewImage)
+                                .testTag("product_photo_${product.id}"),
+                            cornerRadius = 14.dp
+                        )
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(3.dp),
+                            shape = RoundedCornerShape(6.dp),
+                            color = Navy950.copy(alpha = 0.90f)
+                        ) {
+                            Text(
+                                text = product.dimension,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = OnDark,
+                                fontWeight = FontWeight.Black,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Text(
+                            text = product.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Slate100,
+                            fontWeight = FontWeight.Black,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "${product.usine} • ${product.choix} • ${formatM2(product.m2Carton)} m²/ctn (${product.pcs} pcs)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Slate400,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            val primaryPrice = if (product.isSoldByPiece && product.prixPiece > 0.0) {
+                                "${formatDa(product.prixPiece)}/pc"
+                            } else {
+                                "${formatDa(product.prix)}/m²"
+                            }
+                            Text(
+                                text = primaryPrice,
+                                style = PosNumericTextStyle.copy(fontSize = 17.sp),
+                                color = Emerald400
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = stockBg,
+                                border = BorderStroke(1.dp, stockFg.copy(alpha = 0.4f))
+                            ) {
+                                Text(
+                                    text = if (isOut) "${product.stock} ctn • Libre" else "${product.stock} ctn",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = stockFg,
+                                    fontWeight = FontWeight.Black,
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+                    }
                 }
-            }
 
-            // Fused Smart Calculator + Add Button (No standalone +1 Ctn)
-            Button(
-                onClick = onOpenCalculator,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .testTag("btn_calc_${product.id}"),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Amber500,
-                    contentColor = OnDark
-                ),
-                contentPadding = PaddingValues(horizontal = 8.dp)
-            ) {
-                Icon(Icons.Default.Calculate, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "Calculer & Ajouter",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Black,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            // Explicit Dispo Dépôt Button on Every Product Card
-            OutlinedButton(
-                onClick = onCheckDepotDispo,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(44.dp)
-                    .testTag("btn_dispo_${product.id}"),
-                shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.5.dp, Cyan500),
-                contentPadding = PaddingValues(horizontal = 8.dp)
-            ) {
-                Icon(Icons.Default.Warehouse, contentDescription = null, tint = Cyan400, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "Dispo Dépôt",
-                    color = Cyan400,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.ExtraBold,
-                    maxLines = 1
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = onOpenCalculator,
+                        modifier = Modifier
+                            .weight(1.3f)
+                            .height(46.dp)
+                            .testTag("btn_calc_${product.id}"),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Cyan500, contentColor = OnDark)
+                    ) {
+                        Icon(Icons.Default.Calculate, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Calculer & Ajouter", fontWeight = FontWeight.Black)
+                    }
+                    OutlinedButton(
+                        onClick = onCheckDepotDispo,
+                        modifier = Modifier
+                            .weight(0.95f)
+                            .height(46.dp)
+                            .testTag("btn_dispo_${product.id}"),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.5.dp, Cyan500.copy(alpha = 0.65f))
+                    ) {
+                        Icon(Icons.Default.Warehouse, contentDescription = null, tint = Cyan400, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Dispo", color = Cyan400, fontWeight = FontWeight.ExtraBold)
+                    }
+                }
             }
         }
     }
@@ -1076,10 +1427,13 @@ private fun CartPanelContent(
                                         }
                                     }
                                     Text(
-                                        text = "${item.cartons} ctn" + if (item.pieces > 0) " +${item.pieces}p" else "",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        color = Amber400,
-                                        fontWeight = FontWeight.Black
+                                        text = if (item.isSoldByPiece) {
+                                            if (item.cartons > 0) "${item.cartons} ctn + ${item.pieces} pcs" else "${item.pieces} pcs"
+                                        } else {
+                                            "${item.cartons} ctn" + if (item.pieces > 0) " +${item.pieces}p" else ""
+                                        },
+                                        style = PosNumericTextStyle.copy(fontSize = 14.sp),
+                                        color = Amber400
                                     )
                                     Surface(
                                         modifier = Modifier
@@ -1097,9 +1451,8 @@ private fun CartPanelContent(
                                 }
                                 Text(
                                     text = formatDa(item.sousTotal),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = Emerald400,
-                                    fontWeight = FontWeight.Black
+                                    style = PosNumericTextStyle.copy(fontSize = 16.sp),
+                                    color = Emerald400
                                 )
                             }
                         }
@@ -1209,9 +1562,8 @@ private fun CartPanelContent(
             Text("Total Brut", style = MaterialTheme.typography.titleMedium, color = Slate400, fontWeight = FontWeight.Bold)
             Text(
                 text = formatDa(totalBrut),
-                style = MaterialTheme.typography.headlineSmall,
-                color = Emerald400,
-                fontWeight = FontWeight.Black
+                style = PosNumericTextStyle.copy(fontSize = 22.sp),
+                color = Emerald400
             )
         }
 
@@ -1247,12 +1599,14 @@ private enum class QuickCartEditTarget(val allowDecimal: Boolean) {
 @Composable
 private fun EditCartItemQuickDialog(
     item: CartItem,
+    canModifyPrices: Boolean = true,
     onDismiss: () -> Unit,
     onOpenFullCalculator: () -> Unit,
     onSave: (name: String, cartons: Int, pieces: Int, m2Carton: Double, pcs: Int, prix: Double, prixPiece: Double) -> Unit
 ) {
     BackHandler { onDismiss() }
     val isOneTime = item.productId.startsWith("onetime_")
+    val canEditPrice = canModifyPrices || isOneTime
     var nameStr by remember { mutableStateOf(item.name) }
     var cartonsStr by remember { mutableStateOf(item.cartons.toString()) }
     var piecesStr by remember { mutableStateOf(item.pieces.toString()) }
@@ -1379,30 +1733,36 @@ private fun EditCartItemQuickDialog(
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     NumericDisplayField(
-                        label = "Prix / m²",
+                        label = if (canEditPrice) "Prix / m²" else "Prix / m² (Verrouillé)",
                         value = priceStr,
-                        isActive = showKeypad && activeTarget == QuickCartEditTarget.PRICE,
+                        isActive = canEditPrice && showKeypad && activeTarget == QuickCartEditTarget.PRICE,
                         onSelect = {
-                            activeTarget = QuickCartEditTarget.PRICE
-                            isPristine = true
-                            showKeypad = true
+                            if (canEditPrice) {
+                                activeTarget = QuickCartEditTarget.PRICE
+                                isPristine = true
+                                showKeypad = true
+                            }
                         },
-                        onClear = { priceStr = ""; isPristine = false },
+                        onClear = if (canEditPrice) ({ priceStr = ""; isPristine = false }) else null,
+                        enabled = canEditPrice,
                         suffix = "DA",
                         accentColor = Emerald500,
                         modifier = Modifier.weight(1f),
                         testTag = "quick_edit_price_field"
                     )
                     NumericDisplayField(
-                        label = "Prix / Pièce",
+                        label = if (canEditPrice) "Prix / Pièce" else "Prix / Pcs (Verrouillé)",
                         value = pricePieceStr,
-                        isActive = showKeypad && activeTarget == QuickCartEditTarget.PRICE_PIECE,
+                        isActive = canEditPrice && showKeypad && activeTarget == QuickCartEditTarget.PRICE_PIECE,
                         onSelect = {
-                            activeTarget = QuickCartEditTarget.PRICE_PIECE
-                            isPristine = true
-                            showKeypad = true
+                            if (canEditPrice) {
+                                activeTarget = QuickCartEditTarget.PRICE_PIECE
+                                isPristine = true
+                                showKeypad = true
+                            }
                         },
-                        onClear = { pricePieceStr = ""; isPristine = false },
+                        onClear = if (canEditPrice) ({ pricePieceStr = ""; isPristine = false }) else null,
+                        enabled = canEditPrice,
                         suffix = "DA/p",
                         accentColor = Amber500,
                         modifier = Modifier.weight(1f),
@@ -2040,6 +2400,7 @@ private fun CheckoutModalDialog(
     totalBrut: Double,
     customers: List<Customer>,
     editingInvoice: Invoice?,
+    canModifyPrices: Boolean = true,
     onDismiss: () -> Unit,
     onConfirm: (InvoiceClient, Double, Double, String, String) -> Unit
 ) {
@@ -2198,15 +2559,18 @@ private fun CheckoutModalDialog(
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     NumericDisplayField(
-                        label = "Remise",
+                        label = if (canModifyPrices) "Remise" else "Remise (Verrouillé)",
                         value = remiseStr,
-                        isActive = showKeypad && activeTarget == CheckoutNumTarget.REMISE,
+                        isActive = canModifyPrices && showKeypad && activeTarget == CheckoutNumTarget.REMISE,
                         onSelect = {
-                            activeTarget = CheckoutNumTarget.REMISE
-                            isPristine = true
-                            showKeypad = true
+                            if (canModifyPrices) {
+                                activeTarget = CheckoutNumTarget.REMISE
+                                isPristine = true
+                                showKeypad = true
+                            }
                         },
-                        onClear = { remiseStr = ""; isPristine = false },
+                        onClear = if (canModifyPrices) ({ remiseStr = ""; isPristine = false }) else null,
+                        enabled = canModifyPrices,
                         suffix = "DA",
                         accentColor = Amber500,
                         modifier = Modifier.weight(1f),

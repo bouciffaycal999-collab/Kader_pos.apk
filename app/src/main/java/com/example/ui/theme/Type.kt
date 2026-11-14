@@ -12,6 +12,7 @@ val OutfitFontFamily = FontFamily(
     Font(R.font.outfit, FontWeight.Normal),
     Font(R.font.outfit, FontWeight.SemiBold),
     Font(R.font.outfit, FontWeight.Bold),
+    Font(R.font.outfit, FontWeight.ExtraBold),
     Font(R.font.outfit, FontWeight.Black)
 )
 
@@ -28,77 +29,93 @@ val TajawalFontFamily = FontFamily(
     Font(R.font.tajawal, FontWeight.Bold)
 )
 
+val PosNumericTextStyle = TextStyle(
+    fontFamily = OutfitFontFamily,
+    fontWeight = FontWeight.Black,
+    fontFeatureSettings = "tnum"
+)
+
 val Typography = Typography(
     displaySmall = TextStyle(
         fontFamily = OutfitFontFamily,
         fontWeight = FontWeight.Black,
         fontSize = 32.sp,
-        lineHeight = 38.sp
+        lineHeight = 38.sp,
+        letterSpacing = (-0.5).sp,
+        fontFeatureSettings = "tnum"
     ),
     headlineMedium = TextStyle(
         fontFamily = OutfitFontFamily,
         fontWeight = FontWeight.ExtraBold,
         fontSize = 26.sp,
-        lineHeight = 32.sp
+        lineHeight = 32.sp,
+        letterSpacing = (-0.3).sp
     ),
     headlineSmall = TextStyle(
         fontFamily = OutfitFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 22.sp,
-        lineHeight = 28.sp
+        lineHeight = 28.sp,
+        letterSpacing = (-0.2).sp
     ),
     titleLarge = TextStyle(
         fontFamily = OutfitFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 20.sp,
-        lineHeight = 26.sp
+        lineHeight = 26.sp,
+        letterSpacing = (-0.15).sp
     ),
     titleMedium = TextStyle(
         fontFamily = PlusJakartaFontFamily,
         fontWeight = FontWeight.Bold,
-        fontSize = 17.sp,
-        lineHeight = 23.sp
+        fontSize = 16.sp,
+        lineHeight = 22.sp,
+        letterSpacing = 0.sp
     ),
     titleSmall = TextStyle(
         fontFamily = PlusJakartaFontFamily,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 15.sp,
-        lineHeight = 20.sp
+        fontSize = 14.sp,
+        lineHeight = 19.sp,
+        letterSpacing = 0.1.sp
     ),
     bodyLarge = TextStyle(
         fontFamily = PlusJakartaFontFamily,
         fontWeight = FontWeight.Normal,
-        fontSize = 16.sp,
-        lineHeight = 23.sp
+        fontSize = 15.sp,
+        lineHeight = 22.sp
     ),
     bodyMedium = TextStyle(
         fontFamily = PlusJakartaFontFamily,
         fontWeight = FontWeight.Normal,
-        fontSize = 15.sp,
-        lineHeight = 21.sp
+        fontSize = 14.sp,
+        lineHeight = 20.sp
     ),
     bodySmall = TextStyle(
         fontFamily = PlusJakartaFontFamily,
         fontWeight = FontWeight.Medium,
-        fontSize = 13.sp,
-        lineHeight = 18.sp
+        fontSize = 12.sp,
+        lineHeight = 17.sp
     ),
     labelLarge = TextStyle(
         fontFamily = PlusJakartaFontFamily,
         fontWeight = FontWeight.Bold,
-        fontSize = 15.sp,
-        lineHeight = 20.sp
+        fontSize = 14.sp,
+        lineHeight = 19.sp,
+        letterSpacing = 0.1.sp
     ),
     labelMedium = TextStyle(
         fontFamily = PlusJakartaFontFamily,
         fontWeight = FontWeight.Bold,
-        fontSize = 13.sp,
-        lineHeight = 17.sp
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        letterSpacing = 0.2.sp
     ),
     labelSmall = TextStyle(
         fontFamily = PlusJakartaFontFamily,
         fontWeight = FontWeight.Bold,
-        fontSize = 12.sp,
-        lineHeight = 15.sp
+        fontSize = 11.sp,
+        lineHeight = 14.sp,
+        letterSpacing = 0.3.sp
     )
 )

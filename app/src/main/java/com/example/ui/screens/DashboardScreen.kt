@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.LinearProgressIndicator
@@ -27,8 +29,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.model.Customer
 import com.example.data.model.Invoice
 import com.example.data.model.PosSeeds
@@ -41,6 +45,7 @@ import com.example.ui.theme.Cyan500
 import com.example.ui.theme.Emerald400
 import com.example.ui.theme.Navy950
 import com.example.ui.theme.OnDark
+import com.example.ui.theme.PosNumericTextStyle
 import com.example.ui.theme.Rose400
 import com.example.ui.theme.Slate100
 import com.example.ui.theme.Slate400
@@ -55,7 +60,8 @@ import java.util.Locale
 @Composable
 fun DashboardScreen(
     invoices: List<Invoice>,
-    customers: List<Customer>
+    customers: List<Customer>,
+    canViewPrixAchat: Boolean = false
 ) {
     var siteFilter by remember { mutableStateOf("Tous") }
     var periodFilter by remember { mutableStateOf("Tout") }
@@ -155,14 +161,38 @@ fun DashboardScreen(
         ) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 KpiCard("Chiffre d'Affaires", formatDa(totalCa), "${filtered.size} ventes", Emerald400, Modifier.weight(1f))
-                KpiCard("Marge Estimée", formatDa(totalMarge), "Hors remises", Cyan400, Modifier.weight(1f))
+                if (canViewPrixAchat) {
+                    KpiCard(
+                        title = "Marge Estimée",
+                        value = formatDa(totalMarge),
+                        sub = "Hors remises",
+                        accent = Cyan400,
+                        modifier = Modifier.weight(1f).testTag("kpi_margin_card")
+                    )
+                } else {
+                    KpiCard(
+                        title = "Surface Vendue",
+                        value = "${formatM2(totalM2)} m²",
+                        sub = "${filtered.sumOf { i -> i.articles.sumOf { it.cartons } }} cartons",
+                        accent = Amber400,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                KpiCard("Surface Vendue", "${formatM2(totalM2)} m²", "${filtered.sumOf { i -> i.articles.sumOf { it.cartons } }} cartons", Amber400, Modifier.weight(1f))
-                KpiCard("Créances Clients", formatDa(totalCreditClients), "${customers.count { it.dette > 0 }} débiteurs", Rose400, Modifier.weight(1f))
+            if (canViewPrixAchat) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    KpiCard("Surface Vendue", "${formatM2(totalM2)} m²", "${filtered.sumOf { i -> i.articles.sumOf { it.cartons } }} cartons", Amber400, Modifier.weight(1f))
+                    KpiCard("Créances Clients", formatDa(totalCreditClients), "${customers.count { it.dette > 0 }} débiteurs", Rose400, Modifier.weight(1f))
+                }
+            } else {
+                KpiCard("Créances Clients", formatDa(totalCreditClients), "${customers.count { it.dette > 0 }} débiteurs", Rose400, Modifier.fillMaxWidth())
             }
 
-            Surface(shape = RoundedCornerShape(16.dp), color = Slate900, border = BorderStroke(1.5.dp, Slate800)) {
+            ElevatedCard(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = Slate900),
+                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
+            ) {
                 Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Performance par Site", style = MaterialTheme.typography.titleMedium, color = Navy950, fontWeight = FontWeight.Black)
                     PosSeeds.SITES.forEach { site ->
@@ -173,7 +203,7 @@ fun DashboardScreen(
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text("$site (${siteInvoices.size})", style = MaterialTheme.typography.bodyMedium, color = Slate100, fontWeight = FontWeight.Bold)
-                                Text(formatDa(siteCa), style = MaterialTheme.typography.bodyMedium, color = Cyan400, fontWeight = FontWeight.Black)
+                                Text(formatDa(siteCa), style = PosNumericTextStyle.copy(fontSize = 15.sp), color = Cyan400)
                             }
                             LinearProgressIndicator(
                                 progress = { share },
@@ -186,7 +216,11 @@ fun DashboardScreen(
                 }
             }
 
-            Surface(shape = RoundedCornerShape(16.dp), color = Slate900, border = BorderStroke(1.5.dp, Slate800)) {
+            ElevatedCard(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = Slate900),
+                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
+            ) {
                 Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Top 10 Carreaux Vendus", style = MaterialTheme.typography.titleMedium, color = Navy950, fontWeight = FontWeight.Black)
                     if (topTiles.isEmpty()) {
@@ -222,10 +256,15 @@ private fun KpiCard(
     accent: Color,
     modifier: Modifier = Modifier
 ) {
-    Surface(modifier = modifier, shape = RoundedCornerShape(16.dp), color = Slate900, border = BorderStroke(1.5.dp, accent.copy(alpha = 0.45f))) {
+    ElevatedCard(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.elevatedCardColors(containerColor = Slate900),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 3.dp)
+    ) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(title, style = MaterialTheme.typography.labelMedium, color = Slate400, fontWeight = FontWeight.Bold)
-            Text(value, style = MaterialTheme.typography.titleLarge, color = accent, fontWeight = FontWeight.Black)
+            Text(value, style = PosNumericTextStyle.copy(fontSize = 20.sp), color = accent)
             Text(sub, style = MaterialTheme.typography.labelSmall, color = Slate400, fontWeight = FontWeight.SemiBold)
         }
     }

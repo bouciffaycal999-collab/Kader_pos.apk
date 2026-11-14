@@ -5,6 +5,11 @@ import java.text.DecimalFormatSymbols
 import java.util.Locale
 import kotlin.math.roundToLong
 
+data class WaRecipient(
+    val name: String = "",
+    val phone: String = ""
+)
+
 data class TileProduct(
     val id: String,
     val name: String,
@@ -21,8 +26,12 @@ data class TileProduct(
     val finition: String = "brillant",
     val choix: String = "1er Choix",
     val categorie: String = "sol",
-    val description: String = ""
-)
+    val description: String = "",
+    val pricingUnit: String = "carton", // "carton" | "piece"
+    val prixPiece: Double = 0.0
+) {
+    val isSoldByPiece: Boolean get() = pricingUnit == "piece"
+}
 
 data class CartItem(
     val id: String,
@@ -43,8 +52,11 @@ data class CartItem(
     val color: String = "#94a3b8",
     val colorName: String = "",
     val image: String = "",
-    val prixPiece: Double = 0.0
-)
+    val prixPiece: Double = 0.0,
+    val pricingUnit: String = "carton"
+) {
+    val isSoldByPiece: Boolean get() = pricingUnit == "piece"
+}
 
 data class FreeLineItem(
     val id: String,
@@ -78,7 +90,10 @@ data class Invoice(
     val resteAPayer: Double,
     val modePaiement: String,
     val statut: String,
-    val notes: String = ""
+    val notes: String = "",
+    val vendeurTel: String = "",
+    val hidePrices: Boolean = false,
+    val whatsappSentBeforePrint: Boolean = false
 )
 
 data class Customer(
@@ -150,7 +165,39 @@ data class StaffUser(
     val canViewSuppliers: Boolean,
     val canViewCaisse: Boolean,
     val canManageUsers: Boolean,
-    val active: Boolean = true
+    val active: Boolean = true,
+    val phone: String = "",
+    val canViewPrixAchat: Boolean = (role == "admin" || role == "gerant"),
+    val canModifyPrices: Boolean = (role == "admin" || role == "gerant")
+)
+
+data class RolePolicy(
+    val roleId: String, // "admin" | "gerant" | "vendeur"
+    val displayName: String,
+    val description: String = "",
+    val canViewPrixAchat: Boolean = false,
+    val canModifyPrices: Boolean = false,
+    val canModifyStock: Boolean = false,
+    val canEditInvoices: Boolean = true,
+    val canDeleteInvoices: Boolean = false,
+    val canViewSuppliers: Boolean = false,
+    val canViewCaisse: Boolean = false,
+    val canManageUsers: Boolean = false,
+    val allowedTabs: List<String> = emptyList()
+)
+
+data class EffectivePermissions(
+    val roleId: String,
+    val canViewPrixAchat: Boolean,
+    val canModifyPrices: Boolean,
+    val canModifyStock: Boolean,
+    val canEditInvoices: Boolean,
+    val canDeleteInvoices: Boolean,
+    val canViewSuppliers: Boolean,
+    val canViewCaisse: Boolean,
+    val canManageUsers: Boolean,
+    val canHideInvoicePrices: Boolean,
+    val allowedTabs: List<String>
 )
 
 data class StoreInfo(
@@ -164,17 +211,21 @@ data class StoreInfo(
     val rc: String,
     val nif: String,
     val nis: String,
-    val ai: String
+    val ai: String,
+    val invoiceWaRecipients: List<WaRecipient> = PosSeeds.DEFAULT_INVOICE_WA_RECIPIENTS,
+    val dispoWaRecipients: List<WaRecipient> = PosSeeds.DEFAULT_DISPO_WA_RECIPIENTS
 )
 
 data class AppSettings(
     val printFormat: String = "A4", // "A4" | "A5"
     val a5Density: String = "compact", // "ultra" | "compact" | "normal"
     val hideBainTeinteFacture: Boolean = true,
-    val colorTheme: String = "ceramic_blue",
+    val colorTheme: String = "ceramica_showroom",
     val touchFriendlyMode: Boolean = true,
     val activeStore: String = "Depot Remchi",
-    val enableSoundAlerts: Boolean = true
+    val enableSoundAlerts: Boolean = true,
+    val deviceSellerName: String = "",
+    val deviceSellerPhone: String = ""
 )
 
 data class DepotNotification(
@@ -205,20 +256,147 @@ object PosSeeds {
         "customers", "suppliers", "caisse", "users", "settings", "calculator"
     )
 
+    val MANAGER_TABS = ALL_TABS.filterNot { it == "users" }
+
+    val SELLER_TABS = listOf("pos", "stock", "invoices", "customers", "calculator")
+
+    val VALID_ROLES = listOf("admin", "gerant", "vendeur")
+
+    val DEFAULT_ROLE_POLICIES = listOf(
+        RolePolicy(
+            roleId = "admin",
+            displayName = "Admin",
+            description = "Accès complet : stock, prix d'achat, marges, tarifs et gestion équipe",
+            canViewPrixAchat = true,
+            canModifyPrices = true,
+            canModifyStock = true,
+            canEditInvoices = true,
+            canDeleteInvoices = true,
+            canViewSuppliers = true,
+            canViewCaisse = true,
+            canManageUsers = true,
+            allowedTabs = ALL_TABS
+        ),
+        RolePolicy(
+            roleId = "gerant",
+            displayName = "Manager (Owner & Gérant)",
+            description = "Gestion commerciale : stock, prix d'achat, tarifs, caisse et usines",
+            canViewPrixAchat = true,
+            canModifyPrices = true,
+            canModifyStock = true,
+            canEditInvoices = true,
+            canDeleteInvoices = true,
+            canViewSuppliers = true,
+            canViewCaisse = true,
+            canManageUsers = false,
+            allowedTabs = MANAGER_TABS
+        ),
+        RolePolicy(
+            roleId = "vendeur",
+            displayName = "Seller (Vendeur)",
+            description = "Vente au comptoir & devis : prix d'achat masqué, tarifs et stock verrouillés",
+            canViewPrixAchat = false,
+            canModifyPrices = false,
+            canModifyStock = false,
+            canEditInvoices = true,
+            canDeleteInvoices = false,
+            canViewSuppliers = false,
+            canViewCaisse = false,
+            canManageUsers = false,
+            allowedTabs = SELLER_TABS
+        )
+    )
+
+    fun defaultPolicyForRole(role: String): RolePolicy =
+        DEFAULT_ROLE_POLICIES.find { it.roleId == role } ?: DEFAULT_ROLE_POLICIES.last()
+
+    fun resolveEffectivePermissions(
+        user: StaffUser?,
+        policies: List<RolePolicy> = DEFAULT_ROLE_POLICIES
+    ): EffectivePermissions {
+        if (user == null) {
+            val fallback = defaultPolicyForRole("vendeur")
+            return EffectivePermissions(
+                roleId = fallback.roleId,
+                canViewPrixAchat = false,
+                canModifyPrices = false,
+                canModifyStock = false,
+                canEditInvoices = false,
+                canDeleteInvoices = false,
+                canViewSuppliers = false,
+                canViewCaisse = false,
+                canManageUsers = false,
+                canHideInvoicePrices = false,
+                allowedTabs = listOf("pos", "calculator")
+            )
+        }
+        val policy = policies.find { it.roleId == user.role } ?: defaultPolicyForRole(user.role)
+        if (user.role == "admin") {
+            return EffectivePermissions(
+                roleId = "admin",
+                canViewPrixAchat = true,
+                canModifyPrices = true,
+                canModifyStock = true,
+                canEditInvoices = true,
+                canDeleteInvoices = true,
+                canViewSuppliers = true,
+                canViewCaisse = true,
+                canManageUsers = true,
+                canHideInvoicePrices = true,
+                allowedTabs = ALL_TABS
+            )
+        }
+        val policyTabs = policy.allowedTabs.ifEmpty {
+            if (user.role == "gerant") MANAGER_TABS else SELLER_TABS
+        }
+        val baseUserTabs = user.allowedTabs.ifEmpty { policyTabs }
+        val resolvedTabs = (baseUserTabs.filter { it in policyTabs } + "calculator")
+            .distinct()
+            .ifEmpty { listOf("pos", "calculator") }
+        val canViewCost = policy.canViewPrixAchat && user.canViewPrixAchat
+        return EffectivePermissions(
+            roleId = user.role,
+            canViewPrixAchat = canViewCost,
+            canModifyPrices = policy.canModifyPrices && user.canModifyPrices,
+            canModifyStock = policy.canModifyStock && user.canModifyStock,
+            canEditInvoices = policy.canEditInvoices && user.canEditInvoices,
+            canDeleteInvoices = policy.canDeleteInvoices && user.canDeleteInvoices,
+            canViewSuppliers = policy.canViewSuppliers && user.canViewSuppliers,
+            canViewCaisse = policy.canViewCaisse && user.canViewCaisse,
+            canManageUsers = policy.canManageUsers && user.canManageUsers,
+            canHideInvoicePrices = canViewCost,
+            allowedTabs = resolvedTabs
+        )
+    }
+
     val SITES = listOf("Depot Remchi", "Magasin Ihab", "Magasin Zohir")
 
+    val DEFAULT_INVOICE_WA_RECIPIENTS = listOf(
+        WaRecipient(name = "Kader (Admin / Gérant)", phone = "0676754124"),
+        WaRecipient(name = "Walid (Owner & Gérant)", phone = "")
+    )
+
+    val DEFAULT_DISPO_WA_RECIPIENTS = listOf(
+        WaRecipient(name = "Kader (Admin / Dépôt)", phone = "0676754124"),
+        WaRecipient(name = "Walid (Owner & Gérant)", phone = ""),
+        WaRecipient(name = "Toufik (Owner & Gérant)", phone = ""),
+        WaRecipient(name = "Amine (Dépôt)", phone = "")
+    )
+
     val DEFAULT_STORE_INFO = StoreInfo(
-        nom = "KADER CERAMIC",
-        nomArabe = "قادر سيراميك — بيع الخزف وبلاط الأرضيات",
+        nom = "CERAMICA",
+        nomArabe = "سيراميكا — بيع الخزف وبلاط الأرضيات",
         slogan = "Dalle de Sol, Faïence Murale, Parquet Céramique & Accessoires de Pose",
         adresse = "ZONE INDUSTRIELLE REMCHI المنطقة الصناعية",
         tel = "0676754124",
         tel2 = "0674369056",
-        email = "contact@kaderceramic.dz",
+        email = "contact@ceramica.dz",
         rc = "16/00-1284560B24",
         nif = "002416012845690",
         nis = "002416012800145",
-        ai = "16041285098"
+        ai = "16041285098",
+        invoiceWaRecipients = DEFAULT_INVOICE_WA_RECIPIENTS,
+        dispoWaRecipients = DEFAULT_DISPO_WA_RECIPIENTS
     )
 
     val DEFAULT_SETTINGS = AppSettings()
@@ -226,7 +404,7 @@ object PosSeeds {
     val DEFAULT_USERS = listOf(
         StaffUser(
             id = "u_kader",
-            name = "Kader (Patron)",
+            name = "Kader",
             role = "admin",
             pin = "1234",
             magasin = "Depot Remchi",
@@ -237,112 +415,136 @@ object PosSeeds {
             canViewSuppliers = true,
             canViewCaisse = true,
             canManageUsers = true,
-            active = true
+            active = true,
+            phone = "0676754124",
+            canViewPrixAchat = true,
+            canModifyPrices = true
         ),
         StaffUser(
             id = "u_walid",
-            name = "Walid (Gérant)",
+            name = "Walid",
             role = "gerant",
             pin = "2222",
             magasin = "Depot Remchi",
-            allowedTabs = listOf("pos", "stock", "invoices", "dashboard", "customers", "suppliers", "caisse", "settings"),
+            allowedTabs = MANAGER_TABS,
             canEditInvoices = true,
             canDeleteInvoices = true,
             canModifyStock = true,
             canViewSuppliers = true,
             canViewCaisse = true,
             canManageUsers = false,
-            active = true
+            active = true,
+            phone = "",
+            canViewPrixAchat = true,
+            canModifyPrices = true
         ),
         StaffUser(
             id = "u_toufik",
-            name = "Toufik (Dépôt)",
+            name = "Toufik",
             role = "gerant",
             pin = "3333",
             magasin = "Depot Remchi",
-            allowedTabs = listOf("pos", "stock", "invoices", "dashboard", "customers", "caisse", "settings"),
+            allowedTabs = MANAGER_TABS,
             canEditInvoices = true,
-            canDeleteInvoices = false,
+            canDeleteInvoices = true,
             canModifyStock = true,
-            canViewSuppliers = false,
+            canViewSuppliers = true,
             canViewCaisse = true,
             canManageUsers = false,
-            active = true
-        ),
-        StaffUser(
-            id = "u_amin",
-            name = "Amin (Vendeur)",
-            role = "vendeur",
-            pin = "0001",
-            magasin = "Depot Remchi",
-            allowedTabs = listOf("pos", "stock", "invoices", "customers"),
-            canEditInvoices = true,
-            canDeleteInvoices = false,
-            canModifyStock = false,
-            canViewSuppliers = false,
-            canViewCaisse = false,
-            canManageUsers = false,
-            active = true
+            active = true,
+            phone = "",
+            canViewPrixAchat = true,
+            canModifyPrices = true
         ),
         StaffUser(
             id = "u_ihab",
-            name = "Ihab (Magasin 1)",
-            role = "vendeur",
-            pin = "0002",
+            name = "Ihab",
+            role = "gerant",
+            pin = "4444",
             magasin = "Magasin Ihab",
-            allowedTabs = listOf("pos", "stock", "invoices", "customers"),
+            allowedTabs = MANAGER_TABS,
             canEditInvoices = true,
-            canDeleteInvoices = false,
-            canModifyStock = false,
-            canViewSuppliers = false,
-            canViewCaisse = false,
+            canDeleteInvoices = true,
+            canModifyStock = true,
+            canViewSuppliers = true,
+            canViewCaisse = true,
             canManageUsers = false,
-            active = true
-        ),
-        StaffUser(
-            id = "u_alae",
-            name = "Alae (Vendeur)",
-            role = "vendeur",
-            pin = "0003",
-            magasin = "Depot Remchi",
-            allowedTabs = listOf("pos", "stock", "invoices", "customers"),
-            canEditInvoices = true,
-            canDeleteInvoices = false,
-            canModifyStock = false,
-            canViewSuppliers = false,
-            canViewCaisse = false,
-            canManageUsers = false,
-            active = true
+            active = true,
+            phone = "",
+            canViewPrixAchat = true,
+            canModifyPrices = true
         ),
         StaffUser(
             id = "u_zohir",
-            name = "Zohir (Magasin 2)",
+            name = "Zohir",
             role = "vendeur",
-            pin = "0004",
+            pin = "0001",
             magasin = "Magasin Zohir",
-            allowedTabs = listOf("pos", "stock", "invoices", "customers"),
+            allowedTabs = SELLER_TABS,
             canEditInvoices = true,
             canDeleteInvoices = false,
             canModifyStock = false,
             canViewSuppliers = false,
             canViewCaisse = false,
             canManageUsers = false,
-            active = true
+            active = true,
+            phone = "",
+            canViewPrixAchat = false,
+            canModifyPrices = false
         ),
         StaffUser(
             id = "u_celia",
-            name = "Celia (Showroom)",
+            name = "Celia",
             role = "vendeur",
-            pin = "0005",
+            pin = "0002",
             magasin = "Depot Remchi",
-            allowedTabs = listOf("pos", "stock", "invoices", "customers"),
+            allowedTabs = SELLER_TABS,
             canEditInvoices = true,
             canDeleteInvoices = false,
             canModifyStock = false,
             canViewSuppliers = false,
             canViewCaisse = false,
             canManageUsers = false,
-            active = true
+            active = true,
+            phone = "",
+            canViewPrixAchat = false,
+            canModifyPrices = false
+        ),
+        StaffUser(
+            id = "u_alae",
+            name = "Alae",
+            role = "vendeur",
+            pin = "0003",
+            magasin = "Depot Remchi",
+            allowedTabs = SELLER_TABS,
+            canEditInvoices = true,
+            canDeleteInvoices = false,
+            canModifyStock = false,
+            canViewSuppliers = false,
+            canViewCaisse = false,
+            canManageUsers = false,
+            active = true,
+            phone = "",
+            canViewPrixAchat = false,
+            canModifyPrices = false
+        ),
+        StaffUser(
+            id = "u_amin",
+            name = "Amine",
+            role = "vendeur",
+            pin = "0004",
+            magasin = "Depot Remchi",
+            allowedTabs = SELLER_TABS,
+            canEditInvoices = true,
+            canDeleteInvoices = false,
+            canModifyStock = false,
+            canViewSuppliers = false,
+            canViewCaisse = false,
+            canManageUsers = false,
+            active = true,
+            phone = "",
+            canViewPrixAchat = false,
+            canModifyPrices = false
         )
     )
 
@@ -416,7 +618,7 @@ object PosSeeds {
         DiversPreset("Main d'Œuvre / Manutention Déchargement", "forfait", 2000.0)
     )
 
-    val WHATSAPP_PATRON = "213676754124"
+    val WHATSAPP_MANAGEMENT = "213676754124"
     val WHATSAPP_DEPOT = "213674369056"
 }
 

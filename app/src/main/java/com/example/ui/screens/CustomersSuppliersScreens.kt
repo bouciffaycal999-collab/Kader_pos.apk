@@ -166,7 +166,7 @@ fun CustomersScreen(
                             }
                             if (c.tel.isNotBlank()) {
                                 OutlinedButton(
-                                    onClick = { openWhatsApp(context, toDzWhatsAppDigits(c.tel), "Bonjour ${c.nom}, message de KADER CERAMIC Remchi.") },
+                                    onClick = { openWhatsApp(context, toDzWhatsAppDigits(c.tel), "Bonjour ${c.nom}, message de CERAMICA Remchi.") },
                                     modifier = Modifier.weight(1f).height(48.dp),
                                     shape = RoundedCornerShape(12.dp),
                                     border = BorderStroke(1.5.dp, Emerald500)
@@ -348,7 +348,7 @@ fun SuppliersScreen(
                             }
                             if (s.tel.isNotBlank()) {
                                 OutlinedButton(
-                                    onClick = { openWhatsApp(context, toDzWhatsAppDigits(s.tel), "Salam ${s.nom}, KADER CERAMIC Remchi.") },
+                                    onClick = { openWhatsApp(context, toDzWhatsAppDigits(s.tel), "Salam ${s.nom}, CERAMICA Remchi.") },
                                     modifier = Modifier.height(44.dp),
                                     shape = RoundedCornerShape(12.dp),
                                     border = BorderStroke(1.5.dp, Emerald500)

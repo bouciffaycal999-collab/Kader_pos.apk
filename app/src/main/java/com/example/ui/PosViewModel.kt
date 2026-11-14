@@ -1,5 +1,6 @@
 package com.example.ui
 
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -9,10 +10,12 @@ import com.example.data.model.CartItem
 import com.example.data.model.Customer
 import com.example.data.model.DailyCaisseCount
 import com.example.data.model.DepotNotification
+import com.example.data.model.EffectivePermissions
 import com.example.data.model.FreeLineItem
 import com.example.data.model.Invoice
 import com.example.data.model.InvoiceClient
 import com.example.data.model.PosSeeds
+import com.example.data.model.RolePolicy
 import com.example.data.model.StaffUser
 import com.example.data.model.StoreInfo
 import com.example.data.model.Supplier
@@ -24,8 +27,12 @@ import com.example.data.remote.OperationType
 import com.example.data.remote.handleFirestoreError
 import com.example.data.remote.unwrapFirestoreException
 import com.example.data.repository.PosRepository
+import com.example.service.DepotAlertMonitorService
+import com.example.util.SaleSystemNotifier
+import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -33,10 +40,16 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -60,6 +73,7 @@ data class PosUiState(
     val caisseMovements: List<CaisseMovement> = emptyList(),
     val dailyCaisseCounts: List<DailyCaisseCount> = emptyList(),
     val users: List<StaffUser> = emptyList(),
+    val rolePolicies: List<RolePolicy> = PosSeeds.DEFAULT_ROLE_POLICIES,
     val notifications: List<DepotNotification> = emptyList(),
     val cart: List<CartItem> = emptyList(),
     val freeLines: List<FreeLineItem> = emptyList(),
@@ -76,9 +90,14 @@ data class PosUiState(
     val statusMessage: String? = null,
     val firebaseUserEmail: String? = null,
     val isCloudSynced: Boolean = false,
+    val isNetworkAvailable: Boolean = true,
+    val pendingCloudWrites: Int = 0,
     val cloudSyncError: String? = null,
-    val autoEmailPdf: Boolean = false
+    val autoEmailPdf: Boolean = false,
+    val depotWatchEnabled: Boolean = true
 ) {
+    val effectivePermissions: EffectivePermissions
+        get() = PosSeeds.resolveEffectivePermissions(currentUser, rolePolicies)
     val unreadNotificationsCount: Int get() = notifications.count { !it.read }
     val cartTotalBrut: Double
         get() = cart.sumOf { it.sousTotal } + freeLines.sumOf { it.sousTotal }
@@ -101,7 +120,9 @@ private data class LocalNavState(
     val editingInvoice: Invoice? = null,
     val statusMessage: String? = null,
     val isCloudSynced: Boolean = false,
-    val cloudSyncError: String? = null
+    val pendingCloudWrites: Int = 0,
+    val cloudSyncError: String? = null,
+    val depotWatchEnabled: Boolean = true
 )
 
 class PosViewModel(
@@ -109,12 +130,32 @@ class PosViewModel(
     private val firestoreRepo: FirestorePosRepository?,
     private val currentUserId: String?,
     private val userEmail: String?,
-    private val userDisplayName: String?
+    private val userDisplayName: String?,
+    private val isNetworkConnectedFlow: Flow<Boolean> = flowOf(true),
+    private val appContext: Context? = null
 ) : ViewModel() {
 
-    private val navState = MutableStateFlow(LocalNavState())
+    private val navState = MutableStateFlow(
+        LocalNavState(
+            depotWatchEnabled = appContext?.let { SaleSystemNotifier.isDepotWatchEnabled(it) } ?: true
+        )
+    )
+    private val networkOnlineState = MutableStateFlow(true)
+    private val bootstrapMutex = Mutex()
+    private var initialCloudSeedCompleted = false
 
     init {
+        viewModelScope.launch {
+            isNetworkConnectedFlow.distinctUntilChanged().collect { online ->
+                val wasOffline = !networkOnlineState.value
+                networkOnlineState.value = online
+                val remote = firestoreRepo
+                val uid = currentUserId
+                if (online && wasOffline && remote != null && !uid.isNullOrBlank()) {
+                    syncBootstrapAndFlush(remote, uid, notifyUser = false)
+                }
+            }
+        }
         viewModelScope.launch {
             repository.ensureSeeded()
             navState.update { it.copy(isReady = true) }
@@ -130,39 +171,15 @@ class PosViewModel(
         remote: FirestorePosRepository,
         uid: String
     ) {
-        try {
-            remote.ensureUserAccount(uid, userEmail, userDisplayName)
-            remote.seedDefaultsIfEmpty(
-                userId = uid,
-                staffUsers = repository.getUsersSnapshot(),
-                customers = repository.getCustomersSnapshot(),
-                suppliers = repository.getSuppliersSnapshot(),
-                caisseMovements = repository.getCaisseSnapshot(),
-                storeInfo = repository.getStoreInfoSnapshot(),
-                settings = repository.getSettingsSnapshot()
-            )
-            remote.seedProductsIfEmpty(
-                userId = uid,
-                products = repository.getProductsSnapshot()
-            )
-            remote.seedOfflineHistoryIfEmpty(
-                userId = uid,
-                invoices = repository.getInvoicesSnapshot(),
-                supplierMovements = repository.getSupplierMovementsSnapshot(),
-                dailyCaisseCounts = repository.getDailyCaisseCountsSnapshot(),
-                notifications = repository.getNotificationsSnapshot()
-            )
-            navState.value = navState.value.copy(isCloudSynced = true, cloudSyncError = null)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            val root = e.unwrapFirestoreException() ?: e
-            Log.w(TAG, "Cloud bootstrap warning", root)
-            navState.value = navState.value.copy(
-                cloudSyncError = root.message ?: "Synchronisation cloud en attente"
-            )
+        if (networkOnlineState.value) {
+            syncBootstrapAndFlush(remote, uid, notifyUser = false)
+        } else {
+            navState.update {
+                it.copy(cloudSyncError = "Hors connexion — cache local actif")
+            }
         }
 
+        // Attach all real-time listeners immediately so offline cache and live updates work seamlessly
         collectCloudStream(
             path = "users/$uid/products",
             flow = remote.observeProducts(uid)
@@ -173,7 +190,9 @@ class PosViewModel(
             path = "users/$uid/invoices",
             flow = remote.observeInvoices(uid)
         ) { items ->
-            repository.replaceInvoicesFromCloud(items)
+            if (items.isNotEmpty() || !repository.hasPendingOfflineSync()) {
+                repository.replaceInvoicesFromCloud(items)
+            }
         }
         collectCloudStream(
             path = "users/$uid/customers",
@@ -191,7 +210,9 @@ class PosViewModel(
             path = "users/$uid/supplier_movements",
             flow = remote.observeSupplierMovements(uid)
         ) { items ->
-            repository.replaceSupplierMovementsFromCloud(items)
+            if (items.isNotEmpty() || !repository.hasPendingOfflineSync()) {
+                repository.replaceSupplierMovementsFromCloud(items)
+            }
         }
         collectCloudStream(
             path = "users/$uid/caisse_movements",
@@ -203,7 +224,9 @@ class PosViewModel(
             path = "users/$uid/daily_caisse_counts",
             flow = remote.observeDailyCaisseCounts(uid)
         ) { items ->
-            repository.replaceDailyCaisseCountsFromCloud(items)
+            if (items.isNotEmpty() || !repository.hasPendingOfflineSync()) {
+                repository.replaceDailyCaisseCountsFromCloud(items)
+            }
         }
         collectCloudStream(
             path = "users/$uid/staff_users",
@@ -212,10 +235,30 @@ class PosViewModel(
             if (items.isNotEmpty()) repository.replaceUsersFromCloud(items)
         }
         collectCloudStream(
+            path = "users/$uid/role_policies",
+            flow = remote.observeRolePolicies(uid)
+        ) { items ->
+            if (items.isNotEmpty()) repository.replaceRolePoliciesFromCloud(items)
+        }
+        collectCloudStream(
             path = "users/$uid/notifications",
             flow = remote.observeNotifications(uid)
         ) { items ->
-            repository.replaceNotificationsFromCloud(items)
+            if (items.isNotEmpty() || !repository.hasPendingOfflineSync()) {
+                repository.replaceNotificationsFromCloud(items)
+            }
+            val ctx = appContext
+            if (ctx != null && items.isNotEmpty()) {
+                val activeId = repository.currentUserIdFlow.firstOrNull()
+                val activeStaff = repository.getUsersSnapshot().find { it.id == activeId && it.active }
+                val role = activeStaff?.role ?: uiState.value.currentUser?.role
+                val isAdminOrMgr = role == null || role == "admin" || role == "gerant"
+                SaleSystemNotifier.processCloudNotifications(
+                    context = ctx,
+                    notifications = items,
+                    isAdminOrManager = isAdminOrMgr
+                )
+            }
         }
         collectCloudStream(
             path = "users/$uid/store_info/default",
@@ -231,6 +274,95 @@ class PosViewModel(
         }
     }
 
+    private suspend fun syncBootstrapAndFlush(
+        remote: FirestorePosRepository,
+        uid: String,
+        notifyUser: Boolean
+    ) {
+        bootstrapMutex.withLock {
+            try {
+                if (repository.hasPendingOfflineSync()) {
+                    remote.mergeMissingOfflineData(
+                        userId = uid,
+                        products = repository.getProductsSnapshot(),
+                        customers = repository.getCustomersSnapshot(),
+                        suppliers = repository.getSuppliersSnapshot(),
+                        invoices = repository.getInvoicesSnapshot(),
+                        caisseMovements = repository.getCaisseSnapshot(),
+                        supplierMovements = repository.getSupplierMovementsSnapshot(),
+                        dailyCaisseCounts = repository.getDailyCaisseCountsSnapshot(),
+                        notifications = repository.getNotificationsSnapshot()
+                    )
+                    repository.setPendingOfflineSync(false)
+                }
+                if (!initialCloudSeedCompleted) {
+                    remote.seedProductsIfEmpty(
+                        userId = uid,
+                        products = repository.getProductsSnapshot()
+                    )
+                    remote.seedDefaultsIfEmpty(
+                        userId = uid,
+                        staffUsers = repository.getUsersSnapshot(),
+                        customers = repository.getCustomersSnapshot(),
+                        suppliers = repository.getSuppliersSnapshot(),
+                        caisseMovements = repository.getCaisseSnapshot(),
+                        storeInfo = repository.getStoreInfoSnapshot(),
+                        settings = repository.getSettingsSnapshot(),
+                        rolePolicies = repository.getRolePoliciesSnapshot().ifEmpty { PosSeeds.DEFAULT_ROLE_POLICIES }
+                    )
+                    remote.seedOfflineHistoryIfEmpty(
+                        userId = uid,
+                        invoices = repository.getInvoicesSnapshot(),
+                        supplierMovements = repository.getSupplierMovementsSnapshot(),
+                        dailyCaisseCounts = repository.getDailyCaisseCountsSnapshot(),
+                        notifications = repository.getNotificationsSnapshot()
+                    )
+                    initialCloudSeedCompleted = true
+                }
+                launchCloudSync(OperationType.WRITE, "") { r, user ->
+                    r.ensureUserAccount(user, userEmail, userDisplayName)
+                }
+                withTimeoutOrNull(8_000L) {
+                    remote.waitForPendingWrites()
+                }
+                navState.update {
+                    it.copy(
+                        isCloudSynced = true,
+                        cloudSyncError = null,
+                        statusMessage = if (notifyUser) "Cloud Firestore synchronisé en temps réel" else it.statusMessage
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val root = e.unwrapFirestoreException() ?: e
+                Log.w(TAG, "Cloud bootstrap warning", root)
+                navState.update {
+                    it.copy(
+                        cloudSyncError = root.message ?: "Synchronisation cloud en attente",
+                        statusMessage = if (notifyUser) "Sync cloud en attente : ${root.message ?: "vérifiez internet"}" else it.statusMessage
+                    )
+                }
+            }
+        }
+    }
+
+    fun retryCloudSync() {
+        val remote = firestoreRepo
+        val uid = currentUserId
+        if (remote == null || uid.isNullOrBlank()) {
+            showMessage("Connectez un compte Google pour activer la sync Cloud.")
+            return
+        }
+        if (!networkOnlineState.value) {
+            showMessage("Pas de connexion Internet — les données attendent en file locale.")
+            return
+        }
+        viewModelScope.launch {
+            syncBootstrapAndFlush(remote, uid, notifyUser = true)
+        }
+    }
+
     private fun <T> collectCloudStream(
         path: String,
         flow: Flow<T>,
@@ -238,46 +370,92 @@ class PosViewModel(
     ) {
         viewModelScope.launch {
             flow
+                .retryWhen { cause, attempt ->
+                    val firestoreError = cause.unwrapFirestoreException()
+                    if (firestoreError == null && cause is CancellationException) return@retryWhen false
+                    if (firestoreError?.code == FirebaseFirestoreException.Code.PERMISSION_DENIED ||
+                        firestoreError?.code == FirebaseFirestoreException.Code.UNAUTHENTICATED
+                    ) {
+                        return@retryWhen false
+                    }
+                    val rootError = firestoreError ?: cause
+                    handleFirestoreError(rootError, OperationType.LIST, path)
+                    navState.update {
+                        it.copy(
+                            isCloudSynced = false,
+                            cloudSyncError = "Reconnexion temps réel... (${rootError.message ?: "hors ligne"})"
+                        )
+                    }
+                    val backoffMs = (1000L * (1L shl attempt.coerceAtMost(4).toInt())).coerceAtMost(15_000L)
+                    delay(backoffMs)
+                    true
+                }
                 .catch { error ->
                     val firestoreError = error.unwrapFirestoreException()
                     if (firestoreError == null && error is CancellationException) throw error
                     val rootError = firestoreError ?: error
                     handleFirestoreError(rootError, OperationType.LIST, path)
-                    navState.value = navState.value.copy(
-                        isCloudSynced = false,
-                        cloudSyncError = rootError.message ?: "Erreur de synchronisation cloud"
-                    )
+                    navState.update {
+                        it.copy(
+                            isCloudSynced = false,
+                            cloudSyncError = rootError.message ?: "Erreur de synchronisation cloud"
+                        )
+                    }
                 }
                 .collect { value ->
                     onEachValue(value)
                     if (!navState.value.isCloudSynced || navState.value.cloudSyncError != null) {
-                        navState.value = navState.value.copy(isCloudSynced = true, cloudSyncError = null)
+                        navState.update { it.copy(isCloudSynced = true, cloudSyncError = null) }
                     }
                 }
         }
     }
 
+    private fun launchCloudSync(
+        operationType: OperationType,
+        pathSuffix: String,
+        trackOfflineMutation: Boolean = true,
+        block: suspend (FirestorePosRepository, String) -> Unit
+    ) {
+        val remote = firestoreRepo
+        val uid = currentUserId?.takeIf { it.isNotBlank() }
+        if (remote == null || uid == null) {
+            if (trackOfflineMutation) {
+                viewModelScope.launch { repository.setPendingOfflineSync(true) }
+            }
+            return
+        }
+        viewModelScope.launch {
+            navState.update { it.copy(pendingCloudWrites = it.pendingCloudWrites + 1) }
+            try {
+                runCloudSync(remote, uid, operationType, pathSuffix, block)
+            } finally {
+                navState.update { it.copy(pendingCloudWrites = (it.pendingCloudWrites - 1).coerceAtLeast(0)) }
+            }
+        }
+    }
+
     private suspend fun runCloudSync(
+        remote: FirestorePosRepository,
+        uid: String,
         operationType: OperationType,
         pathSuffix: String,
         block: suspend (FirestorePosRepository, String) -> Unit
     ) {
-        val remote = firestoreRepo ?: return
-        val uid = currentUserId?.takeIf { it.isNotBlank() } ?: return
         val fullPath = if (pathSuffix.isBlank()) "users/$uid" else "users/$uid/$pathSuffix"
         try {
             block(remote, uid)
-            if (navState.value.cloudSyncError != null) {
-                navState.value = navState.value.copy(isCloudSynced = true, cloudSyncError = null)
+            navState.update {
+                if (it.cloudSyncError != null) it.copy(isCloudSynced = true, cloudSyncError = null) else it
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             val root = e.unwrapFirestoreException() ?: e
             handleFirestoreError(root, operationType, fullPath)
-            navState.value = navState.value.copy(
-                cloudSyncError = root.message ?: "Erreur sync cloud"
-            )
+            navState.update {
+                it.copy(cloudSyncError = root.message ?: "Erreur sync cloud")
+            }
         }
     }
 
@@ -311,19 +489,41 @@ class PosViewModel(
         SessionBundle(cart, freeLines, storeInfo, settings, autoEmailPdf)
     }
 
+    private val statusAndNavFlow = combine(
+        repository.rolePoliciesFlow,
+        navState,
+        networkOnlineState
+    ) { rolePolicies, nav, isNetworkAvailable ->
+        Triple(rolePolicies, nav, isNetworkAvailable)
+    }
+
     val uiState: StateFlow<PosUiState> = combine(
         coreDataFlow,
         opsDataFlow,
         sessionDataFlow,
-        navState
-    ) { core, ops, session, nav ->
+        statusAndNavFlow
+    ) { core, ops, session, (rolePolicies, nav, isNetworkAvailable) ->
+        val resolvedPolicies = rolePolicies.ifEmpty { PosSeeds.DEFAULT_ROLE_POLICIES }
         val matchedUser = ops.users.find { it.id == ops.currentUserId && it.active }
             ?: ops.users.firstOrNull { it.active }
-        val resolvedTab = if (matchedUser != null && !matchedUser.allowedTabs.contains(nav.activeTab)) {
-            matchedUser.allowedTabs.firstOrNull() ?: "pos"
+        val resolvedPerms = PosSeeds.resolveEffectivePermissions(matchedUser, resolvedPolicies)
+        val resolvedTab = if (matchedUser != null && !resolvedPerms.allowedTabs.contains(nav.activeTab)) {
+            resolvedPerms.allowedTabs.firstOrNull() ?: "pos"
         } else {
             nav.activeTab
         }
+        val liveCalcTarget = nav.calculatorTarget?.let { target ->
+            val targetProd = target.product
+            if (targetProd != null && !target.isOneTimeProduct) {
+                val refreshed = core.products.find { it.id == targetProd.id }
+                if (refreshed != null && refreshed != targetProd) target.copy(product = refreshed) else target
+            } else target
+        }
+        val effectiveCloudSynced = !currentUserId.isNullOrBlank() &&
+            firestoreRepo != null &&
+            isNetworkAvailable &&
+            nav.isCloudSynced &&
+            nav.cloudSyncError == null
         PosUiState(
             isLoading = !nav.isReady,
             products = core.products,
@@ -334,6 +534,7 @@ class PosViewModel(
             caisseMovements = ops.caisse,
             dailyCaisseCounts = ops.dailyCounts,
             users = ops.users,
+            rolePolicies = resolvedPolicies,
             notifications = ops.notifications,
             cart = session.cart,
             freeLines = session.freeLines,
@@ -343,15 +544,18 @@ class PosViewModel(
             isLocked = nav.isLocked || ops.currentUserId.isNullOrBlank(),
             pinError = nav.pinError,
             activeTab = resolvedTab,
-            calculatorTarget = nav.calculatorTarget,
+            calculatorTarget = liveCalcTarget,
             previewInvoice = nav.previewInvoice,
             showNotificationsSheet = nav.showNotificationsSheet,
             editingInvoice = nav.editingInvoice,
             statusMessage = nav.statusMessage,
             firebaseUserEmail = userEmail,
-            isCloudSynced = nav.isCloudSynced,
+            isCloudSynced = effectiveCloudSynced,
+            isNetworkAvailable = isNetworkAvailable,
+            pendingCloudWrites = nav.pendingCloudWrites,
             cloudSyncError = nav.cloudSyncError,
-            autoEmailPdf = session.autoEmailPdf
+            autoEmailPdf = session.autoEmailPdf,
+            depotWatchEnabled = nav.depotWatchEnabled
         )
     }
         .flowOn(Dispatchers.Default)
@@ -366,7 +570,8 @@ class PosViewModel(
         if (enteredPin == user.pin) {
             viewModelScope.launch {
                 repository.setCurrentUserId(user.id)
-                val firstTab = if (user.allowedTabs.contains("pos")) "pos" else user.allowedTabs.firstOrNull() ?: "pos"
+                val perms = PosSeeds.resolveEffectivePermissions(user, uiState.value.rolePolicies)
+                val firstTab = if (perms.allowedTabs.contains("pos")) "pos" else perms.allowedTabs.firstOrNull() ?: "pos"
                 navState.value = navState.value.copy(
                     isLocked = false,
                     pinError = null,
@@ -389,6 +594,11 @@ class PosViewModel(
     }
 
     fun selectTab(tab: String) {
+        val perms = uiState.value.effectivePermissions
+        if (tab !in perms.allowedTabs) {
+            showMessage("Accès non autorisé à ce module")
+            return
+        }
         navState.value = navState.value.copy(activeTab = tab)
     }
 
@@ -420,7 +630,9 @@ class PosViewModel(
             stock = 0,
             color = item.color,
             colorName = item.colorName,
-            image = item.image
+            image = item.image,
+            pricingUnit = item.pricingUnit,
+            prixPiece = item.prixPiece
         )
         navState.value = navState.value.copy(
             calculatorTarget = CalculatorTarget(
@@ -443,8 +655,100 @@ class PosViewModel(
         navState.value = navState.value.copy(previewInvoice = null)
     }
 
+    fun markInvoiceWhatsappSent(invoiceId: String) {
+        viewModelScope.launch {
+            repository.markInvoiceWhatsappSent(invoiceId)
+            navState.value.previewInvoice?.let { current ->
+                if (current.id == invoiceId && !current.whatsappSentBeforePrint) {
+                    navState.value = navState.value.copy(
+                        previewInvoice = current.copy(whatsappSentBeforePrint = true)
+                    )
+                }
+            }
+            launchCloudSync(OperationType.UPDATE, "invoices/$invoiceId") { remote, uid ->
+                remote.markInvoiceWhatsappSent(uid, invoiceId)
+            }
+        }
+    }
+
+    fun setInvoiceHidePrices(invoiceId: String, hide: Boolean) {
+        if (!uiState.value.effectivePermissions.canHideInvoicePrices) {
+            showMessage("Option masquage prix réservée à Admin / Manager")
+            return
+        }
+        viewModelScope.launch {
+            repository.updateInvoiceHidePrices(invoiceId, hide)
+            navState.value.previewInvoice?.let { current ->
+                if (current.id == invoiceId && current.hidePrices != hide) {
+                    navState.value = navState.value.copy(
+                        previewInvoice = current.copy(hidePrices = hide)
+                    )
+                }
+            }
+            launchCloudSync(OperationType.UPDATE, "invoices/$invoiceId") { remote, uid ->
+                remote.updateInvoiceHidePrices(uid, invoiceId, hide)
+            }
+        }
+    }
+
     fun openNotificationsSheet() {
         navState.value = navState.value.copy(showNotificationsSheet = true)
+    }
+
+    fun openInvoiceById(invoiceId: String) {
+        if (invoiceId.isBlank()) {
+            openNotificationsSheet()
+            return
+        }
+        val match = uiState.value.invoices.find { it.id == invoiceId }
+        if (match != null) {
+            navState.update {
+                it.copy(
+                    showNotificationsSheet = false,
+                    previewInvoice = match
+                )
+            }
+        } else {
+            navState.update { it.copy(showNotificationsSheet = true) }
+        }
+    }
+
+    fun setDepotWatchEnabled(enabled: Boolean) {
+        val ctx = appContext
+        if (ctx != null) {
+            SaleSystemNotifier.setDepotWatchEnabled(ctx, enabled)
+            val role = uiState.value.currentUser?.role
+            val isAdminOrMgr = role == null || role == "admin" || role == "gerant"
+            DepotAlertMonitorService.syncServiceState(
+                context = ctx,
+                isSignedIn = !currentUserId.isNullOrBlank(),
+                isAdminOrManager = isAdminOrMgr
+            )
+        }
+        navState.update {
+            it.copy(
+                depotWatchEnabled = enabled,
+                statusMessage = if (enabled) {
+                    "Veille Dépôt Temps Réel activée (notifications hors-app)"
+                } else {
+                    "Veille persistante désactivée"
+                }
+            )
+        }
+    }
+
+    fun sendTestSystemNotification() {
+        val ctx = appContext
+        if (ctx == null) {
+            showMessage("Contexte Android indisponible pour le test notification.")
+            return
+        }
+        val sent = SaleSystemNotifier.sendTestAdminNotification(ctx)
+        if (sent) {
+            showMessage("Notification test envoyée dans la barre Android")
+        } else {
+            showMessage("Autorisez les notifications Android dans Réglages pour recevoir les alertes hors-app.")
+        }
     }
 
     fun closeNotificationsSheet() {
@@ -453,7 +757,7 @@ class PosViewModel(
             val unreadIds = repository.getUnreadNotificationIds()
             repository.markAllNotificationsRead()
             if (unreadIds.isNotEmpty()) {
-                runCloudSync(OperationType.UPDATE, "notifications") { remote, uid ->
+                launchCloudSync(OperationType.UPDATE, "notifications", trackOfflineMutation = false) { remote, uid ->
                     remote.markAllNotificationsRead(uid, unreadIds)
                 }
             }
@@ -480,6 +784,23 @@ class PosViewModel(
         editingItemId: String?,
         prixPiece: Double = 0.0
     ) {
+        val state = uiState.value
+        val perms = state.effectivePermissions
+        val isOneTime = product.id.startsWith("onetime_")
+        val catalogProduct = if (!isOneTime) state.products.find { it.id == product.id } else null
+        val effectivePrixPerM2 = if (!perms.canModifyPrices && catalogProduct != null) {
+            catalogProduct.prix
+        } else {
+            prixPerM2
+        }
+        val effectivePrixPiece = if (!perms.canModifyPrices && catalogProduct != null) {
+            if (pieces > 0) {
+                if (catalogProduct.prixPiece > 0.0) catalogProduct.prixPiece
+                else kotlin.math.round(catalogProduct.prix * (catalogProduct.m2Carton / catalogProduct.pcs.coerceAtLeast(1)))
+            } else 0.0
+        } else {
+            prixPiece
+        }
         viewModelScope.launch {
             val currentCart = uiState.value.cart.toMutableList()
             val (calcM2, calcTotal) = TileCalculatorMath.calculateCartItemTotals(
@@ -487,8 +808,8 @@ class PosViewModel(
                 pieces = pieces,
                 m2PerCarton = product.m2Carton,
                 pcsPerCarton = product.pcs,
-                prixPerM2 = prixPerM2,
-                prixParPiece = prixPiece
+                prixPerM2 = effectivePrixPerM2,
+                prixParPiece = effectivePrixPiece
             )
             val cleanM2 = if (calcM2 > 0) calcM2 else round2(m2Total)
             if (editingItemId != null) {
@@ -503,11 +824,12 @@ class PosViewModel(
                         cartons = cartons,
                         pieces = pieces,
                         m2Total = cleanM2,
-                        prixUnitaire = prixPerM2,
-                        prixPiece = prixPiece,
+                        prixUnitaire = effectivePrixPerM2,
+                        prixPiece = effectivePrixPiece,
                         sousTotal = calcTotal,
                         bain = bain,
-                        calibre = calibre
+                        calibre = calibre,
+                        pricingUnit = product.pricingUnit
                     )
                 }
             } else {
@@ -520,7 +842,7 @@ class PosViewModel(
                         dimension = product.dimension,
                         m2Carton = product.m2Carton,
                         pcs = product.pcs,
-                        prixUnitaire = prixPerM2,
+                        prixUnitaire = effectivePrixPerM2,
                         prixAchat = product.prixAchat,
                         cartons = cartons,
                         pieces = pieces,
@@ -531,7 +853,8 @@ class PosViewModel(
                         color = product.color,
                         colorName = product.colorName,
                         image = product.image,
-                        prixPiece = prixPiece
+                        prixPiece = effectivePrixPiece,
+                        pricingUnit = product.pricingUnit
                     )
                 )
             }
@@ -550,6 +873,7 @@ class PosViewModel(
         prixUnitaire: Double,
         prixPiece: Double = 0.0
     ) {
+        val perms = uiState.value.effectivePermissions
         viewModelScope.launch {
             val safeM2Carton = m2Carton.coerceAtLeast(0.01)
             val safePcs = pcs.coerceAtLeast(1)
@@ -561,13 +885,16 @@ class PosViewModel(
                 if (item.id != itemId) item
                 else if (cleanCartons == 0 && cleanPieces == 0) null
                 else {
+                    val isOneTime = item.productId.startsWith("onetime_")
+                    val finalPrix = if (!perms.canModifyPrices && !isOneTime) item.prixUnitaire else cleanPrix
+                    val finalPrixPiece = if (!perms.canModifyPrices && !isOneTime) item.prixPiece else cleanPrixPiece
                     val (nextM2, nextTotal) = TileCalculatorMath.calculateCartItemTotals(
                         cartons = cleanCartons,
                         pieces = cleanPieces,
                         m2PerCarton = safeM2Carton,
                         pcsPerCarton = safePcs,
-                        prixPerM2 = cleanPrix,
-                        prixParPiece = cleanPrixPiece
+                        prixPerM2 = finalPrix,
+                        prixParPiece = finalPrixPiece
                     )
                     item.copy(
                         name = name.ifBlank { item.name },
@@ -576,8 +903,8 @@ class PosViewModel(
                         cartons = cleanCartons,
                         pieces = cleanPieces,
                         m2Total = nextM2,
-                        prixUnitaire = cleanPrix,
-                        prixPiece = cleanPrixPiece,
+                        prixUnitaire = finalPrix,
+                        prixPiece = finalPrixPiece,
                         sousTotal = nextTotal
                     )
                 }
@@ -689,8 +1016,11 @@ class PosViewModel(
         val freeLines = state.freeLines
         if (articles.isEmpty() && freeLines.isEmpty()) return
 
+        val perms = state.effectivePermissions
+        val editing = state.editingInvoice
         val totalBrut = round2(articles.sumOf { it.sousTotal } + freeLines.sumOf { it.sousTotal })
-        val cleanRemise = remise.coerceIn(0.0, totalBrut)
+        val requestedRemise = if (perms.canModifyPrices) remise else (editing?.remise ?: 0.0)
+        val cleanRemise = requestedRemise.coerceIn(0.0, totalBrut)
         val totalNet = round2((totalBrut - cleanRemise).coerceAtLeast(0.0))
         val cleanPaye = if (modePaiement == "Crédit") 0.0 else montantPaye.coerceIn(0.0, totalNet)
         val reste = round2((totalNet - cleanPaye).coerceAtLeast(0.0))
@@ -699,9 +1029,17 @@ class PosViewModel(
             cleanPaye > 0.0 -> "Partiel"
             else -> "Crédit"
         }
-        val editing = state.editingInvoice
+        val sellerName = state.settings.deviceSellerName.trim().ifBlank { state.currentUser?.name ?: "Vendeur" }
+        val sellerPhone = state.settings.deviceSellerPhone.trim().ifBlank { state.currentUser?.phone ?: "" }
+        val invoiceMagasin = if (state.settings.activeStore != PosSeeds.DEFAULT_SETTINGS.activeStore) {
+            state.settings.activeStore
+        } else {
+            state.currentUser?.magasin?.takeIf { it.isNotBlank() } ?: state.settings.activeStore
+        }
         val invoice = if (editing != null) {
             editing.copy(
+                vendeur = editing.vendeur.ifBlank { sellerName },
+                vendeurTel = editing.vendeurTel.ifBlank { sellerPhone },
                 client = client,
                 articles = articles,
                 lignesLibres = freeLines,
@@ -719,10 +1057,10 @@ class PosViewModel(
             val seq = (state.invoices.size + 1).toString().padStart(3, '0')
             Invoice(
                 id = "inv_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(4)}",
-                reference = "KC-$dateCode-$seq",
+                reference = "CRM-$dateCode-$seq",
                 date = nowIso(),
-                vendeur = state.currentUser?.name ?: "Vendeur",
-                magasin = state.settings.activeStore,
+                vendeur = sellerName,
+                magasin = invoiceMagasin,
                 client = client,
                 articles = articles,
                 lignesLibres = freeLines,
@@ -733,38 +1071,51 @@ class PosViewModel(
                 resteAPayer = reste,
                 modePaiement = modePaiement,
                 statut = statut,
-                notes = notes
+                notes = notes,
+                vendeurTel = sellerPhone,
+                hidePrices = false,
+                whatsappSentBeforePrint = false
             )
         }
 
+        val fallbackById = state.products.associateBy { it.id }
         viewModelScope.launch {
-            val actorName = state.currentUser?.name ?: "Vendeur"
+            val actorName = state.currentUser?.name ?: sellerName
             val commit = if (editing != null) {
                 repository.updateExistingInvoice(editing, invoice, actorName)
             } else {
                 repository.saveNewInvoice(invoice)
             }
-            runCloudSync(OperationType.WRITE, "invoices/${commit.invoice.id}") { remote, uid ->
-                remote.upsertInvoice(uid, commit.invoice)
-                commit.updatedProductStocks.forEach { (prodId, newStock) ->
-                    remote.updateProductStock(uid, prodId, newStock)
-                }
-                commit.caisseMovement?.let { remote.createCaisseMovement(uid, it) }
-                commit.updatedCustomer?.let { remote.upsertCustomer(uid, it) }
-                remote.createNotification(uid, commit.notification)
-                commit.extraNotifications.forEach { extra ->
-                    remote.createNotification(uid, extra)
-                }
+            val createdIds = listOf(commit.notification.id) + commit.extraNotifications.map { it.id }
+            appContext?.let { SaleSystemNotifier.recordLocalNotificationIds(it, createdIds) }
+            navState.update {
+                it.copy(
+                    editingInvoice = null,
+                    previewInvoice = invoice,
+                    statusMessage = if (editing != null) "Facture #${invoice.reference} modifiée & Direction alertée" else "Facture #${invoice.reference} enregistrée"
+                )
             }
-            navState.value = navState.value.copy(
-                editingInvoice = null,
-                previewInvoice = invoice,
-                statusMessage = if (editing != null) "Facture #${invoice.reference} modifiée & Patron alerté" else "Facture #${invoice.reference} enregistrée"
-            )
+            launchCloudSync(OperationType.WRITE, "invoices/${commit.invoice.id}") { remote, uid ->
+                remote.commitSaleBatch(
+                    userId = uid,
+                    invoice = commit.invoice,
+                    stockDeltas = commit.stockDeltas,
+                    updatedProductStocks = commit.updatedProductStocks,
+                    caisseMovement = commit.caisseMovement,
+                    updatedCustomer = commit.updatedCustomer,
+                    notifications = listOf(commit.notification) + commit.extraNotifications,
+                    fallbackProductsById = fallbackById,
+                    isEdit = editing != null
+                )
+            }
         }
     }
 
     fun startEditingInvoice(invoice: Invoice) {
+        if (!uiState.value.effectivePermissions.canEditInvoices) {
+            showMessage("Modification facture non autorisée")
+            return
+        }
         viewModelScope.launch {
             repository.saveCart(invoice.articles)
             repository.saveFreeLines(invoice.lignesLibres)
@@ -777,17 +1128,25 @@ class PosViewModel(
     }
 
     fun deleteInvoice(invoiceId: String) {
+        if (!uiState.value.effectivePermissions.canDeleteInvoices) {
+            showMessage("Suppression facture refusée : permission requise")
+            return
+        }
         val actor = uiState.value.currentUser?.name ?: "Admin"
         viewModelScope.launch {
-            val (restoredStocks, updatedCust, notif) = repository.deleteInvoiceWithReconcile(invoiceId, actor)
+            val commit = repository.deleteInvoiceWithReconcile(invoiceId, actor)
+            commit.notification?.let { n ->
+                appContext?.let { SaleSystemNotifier.recordLocalNotificationIds(it, listOf(n.id)) }
+            }
             showMessage("Facture supprimée & stock restitué")
-            runCloudSync(OperationType.DELETE, "invoices/$invoiceId") { remote, uid ->
-                remote.deleteInvoice(uid, invoiceId)
-                restoredStocks.forEach { (prodId, newStock) ->
-                    remote.updateProductStock(uid, prodId, newStock)
-                }
-                updatedCust?.let { remote.upsertCustomer(uid, it) }
-                notif?.let { remote.createNotification(uid, it) }
+            launchCloudSync(OperationType.DELETE, "invoices/$invoiceId") { remote, uid ->
+                remote.commitDeleteInvoiceBatch(
+                    userId = uid,
+                    invoiceId = invoiceId,
+                    restoredStockDeltas = commit.restoredStockDeltas,
+                    updatedCustomer = commit.updatedCustomer,
+                    notification = commit.notification
+                )
             }
         }
     }
@@ -799,8 +1158,9 @@ class PosViewModel(
         val site = state.settings.activeStore
         viewModelScope.launch {
             val notif = repository.recordDepotDispoRequest(product, actor, site)
+            appContext?.let { SaleSystemNotifier.recordLocalNotificationIds(it, listOf(notif.id)) }
             showMessage("Dispo Dépôt envoyée (${product.name})")
-            runCloudSync(OperationType.CREATE, "notifications/${notif.id}") { remote, uid ->
+            launchCloudSync(OperationType.CREATE, "notifications/${notif.id}") { remote, uid ->
                 remote.createNotification(uid, notif)
             }
         }
@@ -808,6 +1168,10 @@ class PosViewModel(
 
     fun adjustStock(productId: String, delta: Int) {
         val state = uiState.value
+        if (!state.effectivePermissions.canModifyStock) {
+            showMessage("Stock verrouillé en lecture seule pour ce profil")
+            return
+        }
         val actor = state.currentUser?.name ?: "Admin"
         val site = state.settings.activeStore
         val before = state.products.find { it.id == productId }
@@ -824,8 +1188,11 @@ class PosViewModel(
                         isAlert = newStock <= 5
                     )
                 }
-                runCloudSync(OperationType.UPDATE, "products/$productId") { remote, uid ->
-                    remote.updateProductStock(uid, productId, newStock)
+                stockNotif?.let { n ->
+                    appContext?.let { SaleSystemNotifier.recordLocalNotificationIds(it, listOf(n.id)) }
+                }
+                launchCloudSync(OperationType.UPDATE, "products/$productId") { remote, uid ->
+                    remote.adjustProductStockDelta(uid, productId, delta, updatedProd)
                     stockNotif?.let { remote.createNotification(uid, it) }
                 }
             }
@@ -834,6 +1201,10 @@ class PosViewModel(
 
     fun setStock(productId: String, stock: Int) {
         val state = uiState.value
+        if (!state.effectivePermissions.canModifyStock) {
+            showMessage("Stock verrouillé en lecture seule pour ce profil")
+            return
+        }
         val actor = state.currentUser?.name ?: "Admin"
         val site = state.settings.activeStore
         val before = state.products.find { it.id == productId }
@@ -848,7 +1219,10 @@ class PosViewModel(
                     isAlert = newStock <= 5
                 )
             }
-            runCloudSync(OperationType.UPDATE, "products/$productId") { remote, uid ->
+            stockNotif?.let { n ->
+                appContext?.let { SaleSystemNotifier.recordLocalNotificationIds(it, listOf(n.id)) }
+            }
+            launchCloudSync(OperationType.UPDATE, "products/$productId") { remote, uid ->
                 remote.updateProductStock(uid, productId, newStock)
                 stockNotif?.let { remote.createNotification(uid, it) }
             }
@@ -857,6 +1231,10 @@ class PosViewModel(
 
     fun saveProduct(product: TileProduct) {
         val state = uiState.value
+        if (!state.effectivePermissions.canModifyStock) {
+            showMessage("Modification catalogue et tarifs réservée à l'Admin / Manager")
+            return
+        }
         val actor = state.currentUser?.name ?: "Admin"
         val site = state.settings.activeStore
         val existed = state.products.any { it.id == product.id }
@@ -869,8 +1247,9 @@ class PosViewModel(
                 site = site,
                 isAlert = product.stock <= 5
             )
+            appContext?.let { SaleSystemNotifier.recordLocalNotificationIds(it, listOf(stockNotif.id)) }
             showMessage("Fiche produit enregistrée")
-            runCloudSync(OperationType.WRITE, "products/${product.id}") { remote, uid ->
+            launchCloudSync(OperationType.WRITE, "products/${product.id}") { remote, uid ->
                 remote.upsertProduct(uid, product)
                 remote.createNotification(uid, stockNotif)
             }
@@ -882,7 +1261,7 @@ class PosViewModel(
         viewModelScope.launch {
             repository.upsertCustomer(customer)
             showMessage("Client enregistré")
-            runCloudSync(OperationType.WRITE, "customers/${customer.id}") { remote, uid ->
+            launchCloudSync(OperationType.WRITE, "customers/${customer.id}") { remote, uid ->
                 remote.upsertCustomer(uid, customer)
             }
         }
@@ -895,7 +1274,7 @@ class PosViewModel(
             showMessage("Remboursement encaissé en caisse")
             if (res != null) {
                 val (cust, mov) = res
-                runCloudSync(OperationType.WRITE, "customers/$customerId") { remote, uid ->
+                launchCloudSync(OperationType.WRITE, "customers/$customerId") { remote, uid ->
                     remote.upsertCustomer(uid, cust)
                     remote.createCaisseMovement(uid, mov)
                 }
@@ -908,7 +1287,7 @@ class PosViewModel(
         viewModelScope.launch {
             repository.upsertSupplier(supplier)
             showMessage("Fournisseur enregistré")
-            runCloudSync(OperationType.WRITE, "suppliers/${supplier.id}") { remote, uid ->
+            launchCloudSync(OperationType.WRITE, "suppliers/${supplier.id}") { remote, uid ->
                 remote.upsertSupplier(uid, supplier)
             }
         }
@@ -921,7 +1300,7 @@ class PosViewModel(
             showMessage("Versement usine validé & déduit de la caisse")
             if (res != null) {
                 val (sup, supMov, caisseMov) = res
-                runCloudSync(OperationType.WRITE, "suppliers/$supplierId") { remote, uid ->
+                launchCloudSync(OperationType.WRITE, "suppliers/$supplierId") { remote, uid ->
                     remote.upsertSupplier(uid, sup)
                     remote.createSupplierMovement(uid, supMov)
                     remote.createCaisseMovement(uid, caisseMov)
@@ -937,7 +1316,7 @@ class PosViewModel(
             showMessage("Facture réception ajoutée à la dette usine")
             if (res != null) {
                 val (sup, supMov) = res
-                runCloudSync(OperationType.WRITE, "suppliers/$supplierId") { remote, uid ->
+                launchCloudSync(OperationType.WRITE, "suppliers/$supplierId") { remote, uid ->
                     remote.upsertSupplier(uid, sup)
                     remote.createSupplierMovement(uid, supMov)
                 }
@@ -959,7 +1338,7 @@ class PosViewModel(
         viewModelScope.launch {
             repository.addCaisseMovement(mov)
             showMessage(if (type == "entree") "Entrée de caisse ajoutée" else "Dépense / Sortie enregistrée")
-            runCloudSync(OperationType.CREATE, "caisse_movements/${mov.id}") { remote, uid ->
+            launchCloudSync(OperationType.CREATE, "caisse_movements/${mov.id}") { remote, uid ->
                 remote.createCaisseMovement(uid, mov)
             }
         }
@@ -992,29 +1371,75 @@ class PosViewModel(
         viewModelScope.launch {
             repository.saveDailyCaisseCount(count)
             showMessage("Pointage caisse fin de journée sauvegardé")
-            runCloudSync(OperationType.CREATE, "daily_caisse_counts/${count.id}") { remote, uid ->
+            launchCloudSync(OperationType.CREATE, "daily_caisse_counts/${count.id}") { remote, uid ->
                 remote.createDailyCaisseCount(uid, count)
             }
         }
     }
 
-    // Users & Settings
+    // Users & Role Policies
     fun saveUser(user: StaffUser) {
+        if (!uiState.value.effectivePermissions.canManageUsers) {
+            showMessage("Gestion des comptes réservée à l'Admin")
+            return
+        }
+        val normalizedRole = if (user.role in PosSeeds.VALID_ROLES) user.role else "vendeur"
+        val cleanUser = if (normalizedRole == "admin") {
+            user.copy(
+                role = "admin",
+                allowedTabs = PosSeeds.ALL_TABS,
+                canEditInvoices = true,
+                canDeleteInvoices = true,
+                canModifyStock = true,
+                canViewSuppliers = true,
+                canViewCaisse = true,
+                canManageUsers = true,
+                canViewPrixAchat = true,
+                canModifyPrices = true
+            )
+        } else {
+            user.copy(role = normalizedRole)
+        }
         viewModelScope.launch {
-            repository.upsertUser(user)
-            showMessage("Profil ${user.name} enregistré")
-            runCloudSync(OperationType.WRITE, "staff_users/${user.id}") { remote, uid ->
-                remote.upsertStaffUser(uid, user)
+            repository.upsertUser(cleanUser)
+            showMessage("Profil ${cleanUser.name} enregistré")
+            launchCloudSync(OperationType.WRITE, "staff_users/${cleanUser.id}") { remote, uid ->
+                remote.upsertStaffUser(uid, cleanUser)
             }
         }
     }
 
     fun deleteUser(userId: String) {
+        if (!uiState.value.effectivePermissions.canManageUsers) {
+            showMessage("Suppression de profil réservée à l'Admin")
+            return
+        }
         viewModelScope.launch {
             repository.deleteUser(userId)
             showMessage("Profil supprimé")
-            runCloudSync(OperationType.DELETE, "staff_users/$userId") { remote, uid ->
+            launchCloudSync(OperationType.DELETE, "staff_users/$userId") { remote, uid ->
                 remote.deleteStaffUser(uid, userId)
+            }
+        }
+    }
+
+    fun saveRolePolicy(policy: RolePolicy) {
+        if (!uiState.value.effectivePermissions.canManageUsers) {
+            showMessage("Configuration des rôles réservée à l'Admin")
+            return
+        }
+        val roleId = if (policy.roleId in PosSeeds.VALID_ROLES) policy.roleId else return
+        val sanitized = if (roleId == "admin") {
+            PosSeeds.defaultPolicyForRole("admin")
+        } else {
+            val cleanTabs = (policy.allowedTabs.filter { it in PosSeeds.ALL_TABS } + listOf("pos", "calculator")).distinct()
+            policy.copy(roleId = roleId, allowedTabs = cleanTabs)
+        }
+        viewModelScope.launch {
+            repository.upsertRolePolicy(sanitized)
+            showMessage("Permissions rôle « ${sanitized.displayName} » enregistrées")
+            launchCloudSync(OperationType.WRITE, "role_policies/${sanitized.roleId}") { remote, uid ->
+                remote.upsertRolePolicy(uid, sanitized)
             }
         }
     }
@@ -1023,7 +1448,7 @@ class PosViewModel(
         viewModelScope.launch {
             repository.saveStoreInfo(info)
             showMessage("Coordonnées magasin sauvegardées")
-            runCloudSync(OperationType.WRITE, "store_info/default") { remote, uid ->
+            launchCloudSync(OperationType.WRITE, "store_info/default") { remote, uid ->
                 remote.saveStoreInfo(uid, info)
             }
         }
@@ -1032,7 +1457,7 @@ class PosViewModel(
     fun saveSettings(settings: AppSettings) {
         viewModelScope.launch {
             repository.saveSettings(settings)
-            runCloudSync(OperationType.WRITE, "app_settings/default") { remote, uid ->
+            launchCloudSync(OperationType.WRITE, "app_settings/default") { remote, uid ->
                 remote.saveAppSettings(uid, settings)
             }
         }
@@ -1048,10 +1473,14 @@ class PosViewModel(
     }
 
     fun resetCatalog() {
+        if (!uiState.value.effectivePermissions.canModifyStock) {
+            showMessage("Réinitialisation du stock refusée")
+            return
+        }
         viewModelScope.launch {
             val seeded = repository.resetCatalogToDefault()
             showMessage("Catalogue usines réinitialisé")
-            runCloudSync(OperationType.WRITE, "products") { remote, uid ->
+            launchCloudSync(OperationType.WRITE, "products") { remote, uid ->
                 remote.resetProductsCatalog(uid, seeded)
             }
         }
@@ -1069,10 +1498,11 @@ class PosViewModel(
             val ok = repository.importAllDataJson(json)
             showMessage(if (ok) "Sauvegarde restaurée avec succès" else "Erreur : fichier JSON invalide")
             if (ok) {
-                runCloudSync(OperationType.WRITE, "") { remote, uid ->
+                launchCloudSync(OperationType.WRITE, "") { remote, uid ->
                     repository.getProductsSnapshot().let { remote.resetProductsCatalog(uid, it) }
                     repository.getCustomersSnapshot().forEach { remote.upsertCustomer(uid, it) }
                     repository.getSuppliersSnapshot().forEach { remote.upsertSupplier(uid, it) }
+                    repository.getRolePoliciesSnapshot().forEach { remote.upsertRolePolicy(uid, it) }
                     repository.getUsersSnapshot().forEach { remote.upsertStaffUser(uid, it) }
                     remote.saveStoreInfo(uid, repository.getStoreInfoSnapshot())
                     remote.saveAppSettings(uid, repository.getSettingsSnapshot())

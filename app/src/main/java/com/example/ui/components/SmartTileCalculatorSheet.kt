@@ -97,6 +97,7 @@ import com.example.ui.theme.Slate700
 import com.example.ui.theme.Slate850
 import com.example.ui.theme.Slate900
 import com.example.ui.theme.Slate950
+import com.example.ui.theme.PosNumericTextStyle
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.util.Locale
@@ -138,6 +139,8 @@ fun SmartTileCalculatorSheet(
     product: TileProduct?,
     editingCartItem: CartItem?,
     isOneTimeProduct: Boolean = false,
+    canViewPrixAchat: Boolean = false,
+    canModifyPrices: Boolean = true,
     onDismiss: () -> Unit,
     onConfirmProductCart: (
         product: TileProduct,
@@ -153,13 +156,16 @@ fun SmartTileCalculatorSheet(
     onConfirmStandaloneFreeLine: (FreeLineItem) -> Unit
 ) {
     BackHandler { onDismiss() }
+    val allowCostView = canViewPrixAchat
 
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val isCatalogBound = product != null && !isOneTimeProduct
+    val canEditPrice = canModifyPrices || isOneTimeProduct || !isCatalogBound
     val isProductCartMode = isCatalogBound || isOneTimeProduct || editingCartItem != null
+    val startsInPieceMode = editingCartItem?.isSoldByPiece ?: (product?.isSoldByPiece == true)
 
     var customProductName by remember {
         mutableStateOf(
@@ -180,7 +186,10 @@ fun SmartTileCalculatorSheet(
     var showColisageBuilder by remember { mutableStateOf(!isCatalogBound) }
 
     var mode by remember {
-        mutableStateOf(if (editingCartItem != null) CalcInputMode.CARTONS_PIECES else CalcInputMode.SURFACE)
+        mutableStateOf(
+            if (editingCartItem != null || startsInPieceMode) CalcInputMode.CARTONS_PIECES
+            else CalcInputMode.SURFACE
+        )
     }
     var marginPercent by remember { mutableIntStateOf(0) }
 
@@ -191,10 +200,22 @@ fun SmartTileCalculatorSheet(
         )
     }
     var cartonsStr by remember {
-        mutableStateOf((editingCartItem?.cartons ?: 1).toString())
+        mutableStateOf(
+            when {
+                editingCartItem != null -> editingCartItem.cartons.toString()
+                startsInPieceMode -> "0"
+                else -> "1"
+            }
+        )
     }
     var piecesStr by remember {
-        mutableStateOf((editingCartItem?.pieces ?: 0).toString())
+        mutableStateOf(
+            when {
+                editingCartItem != null -> editingCartItem.pieces.toString()
+                startsInPieceMode -> (product?.pcs?.coerceAtLeast(1) ?: 1).toString()
+                else -> "0"
+            }
+        )
     }
     var colisageM2Str by remember {
         mutableStateOf(
@@ -208,15 +229,17 @@ fun SmartTileCalculatorSheet(
     val initM2Price = editingCartItem?.prixUnitaire ?: product?.prix ?: 1200.0
     val initM2Ctn = (editingCartItem?.m2Carton ?: product?.m2Carton ?: 1.44).coerceAtLeast(0.01)
     val initPcs = (editingCartItem?.pcs ?: product?.pcs ?: 4).coerceAtLeast(1)
+    val catalogPiecePrice = product?.prixPiece?.takeIf { it > 0.0 }
 
     var pricePerM2Str by remember { mutableStateOf(formatMoneyInput(initM2Price)) }
     var pricePerPieceStr by remember {
         val initPiecePrice = editingCartItem?.prixPiece?.takeIf { it > 0.0 }
+            ?: catalogPiecePrice
             ?: round(initM2Price * (initM2Ctn / initPcs))
         mutableStateOf(formatMoneyInput(initPiecePrice))
     }
     var hasCustomPiecePrice by remember {
-        mutableStateOf((editingCartItem?.prixPiece ?: 0.0) > 0.0)
+        mutableStateOf((editingCartItem?.prixPiece ?: 0.0) > 0.0 || (startsInPieceMode && catalogPiecePrice != null))
     }
 
     var bainNote by remember { mutableStateOf(editingCartItem?.bain ?: "") }
@@ -224,7 +247,11 @@ fun SmartTileCalculatorSheet(
 
     var activeField by remember {
         mutableStateOf(
-            if (editingCartItem != null) CalcFieldTarget.CARTONS else CalcFieldTarget.SURFACE
+            when {
+                startsInPieceMode -> CalcFieldTarget.PIECES
+                editingCartItem != null -> CalcFieldTarget.CARTONS
+                else -> CalcFieldTarget.SURFACE
+            }
         )
     }
     var isPristine by remember { mutableStateOf(true) }
@@ -511,10 +538,15 @@ fun SmartTileCalculatorSheet(
                                 overflow = TextOverflow.Ellipsis
                             )
                             if (isCatalogBound && product != null) {
+                                val unitBadge = if (product.isSoldByPiece) {
+                                    val pTxt = if (product.prixPiece > 0.0) "${formatDa(product.prixPiece)}/pc" else "Vente à la pièce"
+                                    " • $pTxt"
+                                } else ""
+                                val costTag = if (allowCostView && product.prixAchat > 0.0) " • Achat: ${formatDa(product.prixAchat)}" else ""
                                 Text(
-                                    text = if (product.stock > 0) "En stock: ${product.stock} ctn" else "Rupture (0 ctn)",
+                                    text = (if (product.stock > 0) "En stock: ${product.stock} ctn" else "Stock: ${product.stock} ctn (Vente libre)") + unitBadge + costTag,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (product.stock > 0) Emerald500 else Rose400,
+                                    color = if (product.stock > 0) Emerald500 else Amber400,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -917,9 +949,8 @@ fun SmartTileCalculatorSheet(
                                             append(" + ${result.loosePieces} Pcs")
                                         }
                                     },
-                                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 21.sp),
-                                    color = Amber500,
-                                    fontWeight = FontWeight.Black
+                                    style = PosNumericTextStyle.copy(fontSize = 21.sp),
+                                    color = Amber500
                                 )
                                 Text(
                                     text = "${formatM2(result.deliveredM2)} m² livrés (${formatM2(result.m2PerCarton)} m²/ctn)",
@@ -947,9 +978,8 @@ fun SmartTileCalculatorSheet(
                                 )
                                 Text(
                                     text = formatDa(result.totalDa),
-                                    style = MaterialTheme.typography.headlineMedium,
-                                    color = Emerald500,
-                                    fontWeight = FontWeight.Black
+                                    style = PosNumericTextStyle.copy(fontSize = 24.sp),
+                                    color = Emerald500
                                 )
                             }
                         }
@@ -987,11 +1017,12 @@ fun SmartTileCalculatorSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 NumericDisplayField(
-                    label = "Prix / m² (Modifiable)",
+                    label = if (canEditPrice) "Prix / m² (Modifiable)" else "Prix / m² (Verrouillé)",
                     value = pricePerM2Str,
-                    isActive = showKeypad && activeField == CalcFieldTarget.PRICE_PER_M2,
-                    onSelect = { selectNumericField(CalcFieldTarget.PRICE_PER_M2) },
-                    onClear = { pricePerM2Str = "" },
+                    isActive = canEditPrice && showKeypad && activeField == CalcFieldTarget.PRICE_PER_M2,
+                    onSelect = { if (canEditPrice) selectNumericField(CalcFieldTarget.PRICE_PER_M2) },
+                    onClear = if (canEditPrice) ({ pricePerM2Str = "" }) else null,
+                    enabled = canEditPrice,
                     suffix = "DA",
                     accentColor = Emerald500,
                     modifier = Modifier.weight(1f),
@@ -999,14 +1030,15 @@ fun SmartTileCalculatorSheet(
                 )
                 if (mode == CalcInputMode.CARTONS_PIECES || loosePiecesCount > 0) {
                     NumericDisplayField(
-                        label = "Prix / Pièce (Coût)",
+                        label = if (canEditPrice) "Prix / Pièce (Coût)" else "Prix / Pièce (Verrouillé)",
                         value = pricePerPieceStr,
-                        isActive = showKeypad && activeField == CalcFieldTarget.PRICE_PER_PIECE,
-                        onSelect = { selectNumericField(CalcFieldTarget.PRICE_PER_PIECE) },
-                        onClear = {
+                        isActive = canEditPrice && showKeypad && activeField == CalcFieldTarget.PRICE_PER_PIECE,
+                        onSelect = { if (canEditPrice) selectNumericField(CalcFieldTarget.PRICE_PER_PIECE) },
+                        onClear = if (canEditPrice) ({
                             hasCustomPiecePrice = true
                             pricePerPieceStr = ""
-                        },
+                        }) else null,
+                        enabled = canEditPrice,
                         suffix = "DA/p",
                         accentColor = Cyan500,
                         modifier = Modifier.weight(1f),

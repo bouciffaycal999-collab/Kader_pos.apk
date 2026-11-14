@@ -9,4 +9,10 @@
     <files-path
         name="invoice_pdfs"
         path="invoices_pdf/" />
+    <files-path
+        name="invoice_photos"
+        path="invoices_photo/" />
+    <cache-path
+        name="shared_photos"
+        path="shared_photos/" />
 </paths>

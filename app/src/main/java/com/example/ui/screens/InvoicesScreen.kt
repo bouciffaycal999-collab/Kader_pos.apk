@@ -28,6 +28,8 @@ import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -47,19 +49,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.model.Invoice
 import com.example.data.model.formatDa
 import com.example.data.model.formatM2
 import com.example.ui.components.ClearableOutlinedTextField
+import com.example.ui.theme.Amber300
 import com.example.ui.theme.Amber400
 import com.example.ui.theme.Amber500
+import com.example.ui.theme.Amber950
+import com.example.ui.theme.Cyan300
 import com.example.ui.theme.Cyan400
 import com.example.ui.theme.Cyan500
+import com.example.ui.theme.Cyan950
 import com.example.ui.theme.Emerald300
 import com.example.ui.theme.Emerald400
 import com.example.ui.theme.Emerald950
 import com.example.ui.theme.Navy950
 import com.example.ui.theme.OnDark
+import com.example.ui.theme.PosNumericTextStyle
 import com.example.ui.theme.Rose400
 import com.example.ui.theme.Rose500
 import com.example.ui.theme.Rose950
@@ -114,9 +122,24 @@ fun InvoicesScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize().background(Slate950)) {
-        Surface(color = Navy950) {
+        Surface(color = Slate900, border = BorderStroke(1.dp, Slate800)) {
             Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Historique des Factures (${filtered.size})", style = MaterialTheme.typography.titleLarge, color = OnDark, fontWeight = FontWeight.Black)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Historique des Factures", style = MaterialTheme.typography.titleLarge, color = Navy950, fontWeight = FontWeight.Black)
+                    Surface(shape = RoundedCornerShape(8.dp), color = Cyan950) {
+                        Text(
+                            text = "${filtered.size}",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Cyan300,
+                            fontWeight = FontWeight.Black,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
+                    }
+                }
                 ClearableOutlinedTextField(
                     value = search,
                     onValueChange = { search = it },
@@ -134,10 +157,10 @@ fun InvoicesScreen(
                             onClick = { dateFilter = d },
                             label = { Text(d, fontWeight = FontWeight.Bold) },
                             colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = Amber500,
+                                selectedContainerColor = Cyan500,
                                 selectedLabelColor = OnDark,
-                                containerColor = Slate900,
-                                labelColor = Slate100
+                                containerColor = Slate950,
+                                labelColor = Slate400
                             )
                         )
                     }
@@ -162,13 +185,12 @@ fun InvoicesScreen(
             ) {
                 items(filtered, key = { it.id }) { inv ->
                     val expanded = expandedId == inv.id
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { expandedId = if (expanded) null else inv.id },
+                    ElevatedCard(
+                        onClick = { expandedId = if (expanded) null else inv.id },
+                        modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(16.dp),
-                        color = Slate900,
-                        border = BorderStroke(1.5.dp, Slate800)
+                        colors = CardDefaults.elevatedCardColors(containerColor = Slate900),
+                        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
                     ) {
                         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Row(
@@ -176,12 +198,42 @@ fun InvoicesScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.Top
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                     Text("#${inv.reference} • ${inv.client.nom}", style = MaterialTheme.typography.titleMedium, color = Slate100, fontWeight = FontWeight.Black)
                                     Text("${inv.date.take(10)} • ${inv.magasin} • ${inv.vendeur}", style = MaterialTheme.typography.bodySmall, color = Slate400, fontWeight = FontWeight.SemiBold)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = if (inv.whatsappSentBeforePrint) Emerald950 else Amber950,
+                                            border = BorderStroke(1.dp, if (inv.whatsappSentBeforePrint) Emerald300 else Amber400)
+                                        ) {
+                                            Text(
+                                                text = if (inv.whatsappSentBeforePrint) "WA Envoyé ✓" else "WA Requis",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (inv.whatsappSentBeforePrint) Emerald300 else Amber300,
+                                                fontWeight = FontWeight.Black,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                        if (inv.hidePrices) {
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = Cyan950,
+                                                border = BorderStroke(1.dp, Cyan400)
+                                            ) {
+                                                Text(
+                                                    text = "Sans Prix (Revendeur)",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = Cyan300,
+                                                    fontWeight = FontWeight.Black,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text(formatDa(inv.totalNet), style = MaterialTheme.typography.titleMedium, color = Emerald400, fontWeight = FontWeight.Black)
+                                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(formatDa(inv.totalNet), style = PosNumericTextStyle.copy(fontSize = 18.sp), color = Emerald400)
                                     Surface(
                                         shape = RoundedCornerShape(8.dp),
                                         color = if (inv.resteAPayer <= 0.01) Emerald950 else Rose950,
@@ -201,15 +253,16 @@ fun InvoicesScreen(
                             if (expanded) {
                                 HorizontalDivider(color = Slate800)
                                 inv.articles.forEach { a ->
+                                    val qtyLabel = if (a.isSoldByPiece) "${a.pieces} pcs" else "${a.cartons} ctn • ${formatM2(a.m2Total)}m²"
                                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Text("${a.name} (${a.cartons} ctn • ${formatM2(a.m2Total)}m²)", style = MaterialTheme.typography.bodySmall, color = Slate100, modifier = Modifier.weight(1f))
-                                        Text(formatDa(a.sousTotal), style = MaterialTheme.typography.bodySmall, color = Cyan400, fontWeight = FontWeight.Bold)
+                                        Text("${a.name} ($qtyLabel)", style = MaterialTheme.typography.bodySmall, color = Slate100, modifier = Modifier.weight(1f))
+                                        Text(formatDa(a.sousTotal), style = PosNumericTextStyle.copy(fontSize = 13.sp), color = Cyan400)
                                     }
                                 }
                                 inv.lignesLibres.forEach { l ->
                                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                         Text("${l.designation} (${formatM2(l.quantite)} ${l.unite})", style = MaterialTheme.typography.bodySmall, color = Slate100, modifier = Modifier.weight(1f))
-                                        Text(formatDa(l.sousTotal), style = MaterialTheme.typography.bodySmall, color = Amber400, fontWeight = FontWeight.Bold)
+                                        Text(formatDa(l.sousTotal), style = PosNumericTextStyle.copy(fontSize = 13.sp), color = Amber400)
                                     }
                                 }
                             }
@@ -227,7 +280,7 @@ fun InvoicesScreen(
                                 ) {
                                     Icon(Icons.Default.Print, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("PDF / Imprimer / WA", fontWeight = FontWeight.Black)
+                                    Text("Photo / PDF / WA", fontWeight = FontWeight.Black)
                                 }
                                 if (canEdit) {
                                     Button(

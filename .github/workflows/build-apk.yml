@@ -1,4 +1,4 @@
-name: Build Kader POS APK
+name: Build CERAMICA POS APK
 
 on:
   push:
@@ -40,23 +40,23 @@ jobs:
       - name: Build Debug APK
         run: gradle assembleDebug --no-daemon
 
-      - name: Prepare Kader_POS.apk
-        run: cp app/build/outputs/apk/debug/app-debug.apk Kader_POS.apk
+      - name: Prepare CERAMICA_POS.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk CERAMICA_POS.apk
 
       - name: Publish direct APK download in GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view latest >/dev/null 2>&1; then
-            gh release upload latest Kader_POS.apk --clobber
+            gh release upload latest CERAMICA_POS.apk --clobber
           else
-            gh release create latest Kader_POS.apk \
-              --title "Kader POS (APK)" \
-              --notes "Tap Kader_POS.apk below to download and install directly on Android."
+            gh release create latest CERAMICA_POS.apk \
+              --title "CERAMICA POS (APK)" \
+              --notes "Tap CERAMICA_POS.apk below to download and install directly on Android."
           fi
 
       - name: Upload APK artifact backup
         uses: actions/upload-artifact@v4
         with:
-          name: Kader_POS_APK
-          path: Kader_POS.apk
+          name: CERAMICA_POS_APK
+          path: CERAMICA_POS.apk

@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Kader POS"
+rootProject.name = "Ceramica"
 
 include(":app")

@@ -1,11 +1,16 @@
 package com.example
 
+import android.Manifest
 import android.content.Context
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -43,10 +48,13 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
@@ -62,6 +70,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -105,29 +114,64 @@ import com.example.ui.screens.StaffLockScreen
 import com.example.ui.screens.StockScreen
 import com.example.ui.screens.SuppliersScreen
 import com.example.ui.screens.UsersScreen
+import com.example.service.DepotAlertMonitorService
+import androidx.compose.material3.HorizontalDivider
 import com.example.ui.theme.Amber500
+import com.example.ui.theme.Cyan300
+import com.example.ui.theme.Cyan400
 import com.example.ui.theme.Cyan500
+import com.example.ui.theme.Cyan950
+import com.example.ui.theme.Emerald500
 import com.example.ui.theme.KaderPosTheme
 import com.example.ui.theme.Navy800
 import com.example.ui.theme.Navy950
 import com.example.ui.theme.OnDark
 import com.example.ui.theme.Rose500
 import com.example.ui.theme.Slate100
+import com.example.ui.theme.Slate400
 import com.example.ui.theme.Slate700
+import com.example.ui.theme.Slate800
+import com.example.ui.theme.Slate850
 import com.example.ui.theme.Slate900
 import com.example.ui.theme.Slate950
+import com.example.util.NetworkConnectivityObserver
+import com.example.util.SaleSystemNotifier
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
+    private val pendingNotificationNav = MutableStateFlow<Pair<Boolean, String?>>(false to null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        SaleSystemNotifier.ensureChannels(applicationContext)
+        captureNotificationIntent(intent)
         setContent {
             KaderPosTheme {
-                KaderCeramicPosApp()
+                val navTarget by pendingNotificationNav.collectAsStateWithLifecycle()
+                KaderCeramicPosApp(
+                    pendingNotificationTarget = navTarget,
+                    onConsumeNotificationTarget = { pendingNotificationNav.value = false to null }
+                )
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        captureNotificationIntent(intent)
+    }
+
+    private fun captureNotificationIntent(intent: Intent?) {
+        if (intent == null) return
+        val openNotifs = intent.getBooleanExtra(SaleSystemNotifier.EXTRA_OPEN_NOTIFICATIONS, false)
+        val invoiceId = intent.getStringExtra(SaleSystemNotifier.EXTRA_INVOICE_ID)
+        if (openNotifs || !invoiceId.isNullOrBlank()) {
+            pendingNotificationNav.value = true to invoiceId
         }
     }
 }
@@ -152,7 +196,10 @@ private val ALL_NAV_TABS = listOf(
 )
 
 @Composable
-fun KaderCeramicPosApp() {
+fun KaderCeramicPosApp(
+    pendingNotificationTarget: Pair<Boolean, String?> = false to null,
+    onConsumeNotificationTarget: () -> Unit = {}
+) {
     val context = LocalContext.current
     val hasFirebase = remember(context) { GoogleAuthManager.isFirebaseAvailable(context) }
     val auth = remember(hasFirebase) {
@@ -204,7 +251,9 @@ fun KaderCeramicPosApp() {
                     firestoreRepo = remoteRepo,
                     currentUserId = user?.uid,
                     userEmail = user?.email,
-                    userDisplayName = user?.displayName
+                    userDisplayName = user?.displayName,
+                    isNetworkConnectedFlow = NetworkConnectivityObserver.observeIsOnline(app.applicationContext),
+                    appContext = app.applicationContext
                 )
             }
         }
@@ -212,6 +261,9 @@ fun KaderCeramicPosApp() {
 
     KaderPosSignedInContent(
         viewModel = viewModel,
+        isGoogleSignedIn = user != null,
+        pendingNotificationTarget = pendingNotificationTarget,
+        onConsumeNotificationTarget = onConsumeNotificationTarget,
         onSignInGoogle = {
             when (val res = GoogleAuthManager.signInInteractive(context, credentialManager, auth)) {
                 AuthAttemptResult.Success -> null
@@ -221,6 +273,7 @@ fun KaderCeramicPosApp() {
             }
         },
         onSignOutGoogle = {
+            DepotAlertMonitorService.syncServiceState(context, isSignedIn = false, isAdminOrManager = false)
             prefs.edit().putBoolean("offline_mode_enabled", false).apply()
             allowOfflineMode = false
             GoogleAuthManager.signOut(credentialManager, scope, auth)
@@ -232,12 +285,68 @@ fun KaderCeramicPosApp() {
 @Composable
 private fun KaderPosSignedInContent(
     viewModel: PosViewModel,
+    isGoogleSignedIn: Boolean,
+    pendingNotificationTarget: Pair<Boolean, String?>,
+    onConsumeNotificationTarget: () -> Unit,
     onSignInGoogle: suspend () -> String?,
     onSignOutGoogle: () -> Unit
 ) {
+    val context = LocalContext.current
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var showMoreTabsSheet by remember { mutableStateOf(false) }
+    var requestedNotifPermissionOnce by remember { mutableStateOf(false) }
+
+    val notifPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val role = state.currentUser?.role
+        val isAdminOrMgr = role == null || role == "admin" || role == "gerant"
+        DepotAlertMonitorService.syncServiceState(
+            context = context,
+            isSignedIn = isGoogleSignedIn,
+            isAdminOrManager = isAdminOrMgr && granted
+        )
+    }
+
+    LaunchedEffect(isGoogleSignedIn, state.currentUser?.role, state.depotWatchEnabled, state.isLocked) {
+        val role = state.currentUser?.role
+        val isAdminOrMgr = role == null || role == "admin" || role == "gerant"
+        if (isGoogleSignedIn && isAdminOrMgr && state.depotWatchEnabled) {
+            if (Build.VERSION.SDK_INT >= 33 &&
+                !SaleSystemNotifier.hasNotificationPermission(context) &&
+                !state.isLocked &&
+                !requestedNotifPermissionOnce
+            ) {
+                requestedNotifPermissionOnce = true
+                notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                DepotAlertMonitorService.syncServiceState(
+                    context = context,
+                    isSignedIn = true,
+                    isAdminOrManager = true
+                )
+            }
+        } else {
+            DepotAlertMonitorService.syncServiceState(
+                context = context,
+                isSignedIn = false,
+                isAdminOrManager = false
+            )
+        }
+    }
+
+    LaunchedEffect(pendingNotificationTarget, state.isLoading, state.isLocked) {
+        val (shouldOpen, invoiceId) = pendingNotificationTarget
+        if (shouldOpen && !state.isLoading && !state.isLocked) {
+            if (!invoiceId.isNullOrBlank()) {
+                viewModel.openInvoiceById(invoiceId)
+            } else {
+                viewModel.openNotificationsSheet()
+            }
+            onConsumeNotificationTarget()
+        }
+    }
 
     LaunchedEffect(state.statusMessage) {
         val msg = state.statusMessage
@@ -257,7 +366,7 @@ private fun KaderPosSignedInContent(
                 CircularProgressIndicator(color = Cyan500)
                 Spacer(modifier = Modifier.height(14.dp))
                 Text(
-                    "Chargement catalogue Kader Ceramic...",
+                    "Chargement catalogue CERAMICA...",
                     color = Navy950,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
@@ -278,7 +387,8 @@ private fun KaderPosSignedInContent(
         return
     }
 
-    val allowedTabKeys = (state.currentUser?.allowedTabs ?: listOf("pos")) + "calculator"
+    val effectivePerms = state.effectivePermissions
+    val allowedTabKeys = effectivePerms.allowedTabs
     val allowedTabs = remember(allowedTabKeys) {
         ALL_NAV_TABS.filter { allowedTabKeys.contains(it.key) }
     }
@@ -298,121 +408,181 @@ private fun KaderPosSignedInContent(
             contentWindowInsets = WindowInsets.safeDrawing,
             snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
-                TopAppBar(
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Navy950,
-                        titleContentColor = OnDark
-                    ),
-                    title = {
-                        Column {
-                            Text(
-                                text = state.storeInfo.nom,
-                                style = MaterialTheme.typography.titleMedium,
-                                color = OnDark,
-                                fontWeight = FontWeight.Black,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = "${state.currentUser?.name ?: ""} • ${state.settings.activeStore}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Amber500,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    },
-                    actions = {
-                        IconButton(
-                            onClick = {
-                                if (state.activeTab == "calculator") {
-                                    viewModel.selectTab("pos")
-                                } else {
-                                    viewModel.selectTab("calculator")
-                                }
-                            },
-                            modifier = Modifier.testTag("topbar_calc_btn")
-                        ) {
-                            Icon(
-                                Icons.Default.Calculate,
-                                contentDescription = "Calculateur m²/Ctn",
-                                tint = Amber500
-                            )
-                        }
-                        IconButton(
-                            onClick = { viewModel.openNotificationsSheet() },
-                            modifier = Modifier.testTag("topbar_notifications_btn")
-                        ) {
-                            BadgedBox(
-                                badge = {
-                                    if (state.unreadNotificationsCount > 0) {
-                                        Badge(containerColor = Rose500, contentColor = OnDark) {
-                                            Text(
-                                                state.unreadNotificationsCount.toString(),
-                                                fontWeight = FontWeight.Black
-                                            )
-                                        }
+                Column {
+                    TopAppBar(
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = Slate900,
+                            titleContentColor = Slate100
+                        ),
+                        title = {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = state.storeInfo.nom.ifBlank { "CERAMICA" },
+                                        style = MaterialTheme.typography.titleLarge,
+                                        color = Navy950,
+                                        fontWeight = FontWeight.Black,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    val cloudLabel = when {
+                                        state.isCloudSynced -> "ONLINE"
+                                        !state.firebaseUserEmail.isNullOrBlank() && state.pendingCloudWrites > 0 ->
+                                            "SYNC (${state.pendingCloudWrites})"
+                                        !state.firebaseUserEmail.isNullOrBlank() -> "HORS-LIGNE"
+                                        else -> "LOCAL"
+                                    }
+                                    val cloudBadgeColor = if (state.isCloudSynced) Emerald500 else Amber500
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = cloudBadgeColor.copy(alpha = 0.12f),
+                                        border = BorderStroke(1.dp, cloudBadgeColor.copy(alpha = 0.50f)),
+                                        modifier = Modifier.testTag("topbar_cloud_status_badge")
+                                    ) {
+                                        Text(
+                                            text = cloudLabel,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = cloudBadgeColor,
+                                            fontWeight = FontWeight.Black,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
                                     }
                                 }
+                                Text(
+                                    text = "${state.settings.deviceSellerName.ifBlank { state.currentUser?.name ?: "" }} • ${state.settings.activeStore}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Slate400,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        },
+                        actions = {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(end = 6.dp)
                             ) {
-                                Icon(Icons.Default.Notifications, contentDescription = "Alertes Patron & Dépôt", tint = OnDark)
+                                FilledTonalIconButton(
+                                    onClick = {
+                                        if (state.activeTab == "calculator") {
+                                            viewModel.selectTab("pos")
+                                        } else {
+                                            viewModel.selectTab("calculator")
+                                        }
+                                    },
+                                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                        containerColor = if (state.activeTab == "calculator") Cyan500 else Cyan950,
+                                        contentColor = if (state.activeTab == "calculator") OnDark else Cyan400
+                                    ),
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("topbar_calc_btn")
+                                ) {
+                                    Icon(
+                                        Icons.Default.Calculate,
+                                        contentDescription = "Calculateur m²/Ctn"
+                                    )
+                                }
+                                FilledTonalIconButton(
+                                    onClick = { viewModel.openNotificationsSheet() },
+                                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                        containerColor = Slate850,
+                                        contentColor = Navy950
+                                    ),
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("topbar_notifications_btn")
+                                ) {
+                                    BadgedBox(
+                                        badge = {
+                                            if (state.unreadNotificationsCount > 0) {
+                                                Badge(containerColor = Rose500, contentColor = OnDark) {
+                                                    Text(
+                                                        state.unreadNotificationsCount.toString(),
+                                                        fontWeight = FontWeight.Black
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Notifications,
+                                            contentDescription = "Alertes Direction & Dépôt",
+                                            tint = Navy950
+                                        )
+                                    }
+                                }
+                                FilledTonalIconButton(
+                                    onClick = { viewModel.lockSession() },
+                                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                        containerColor = Slate850,
+                                        contentColor = Navy950
+                                    ),
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("topbar_lock_btn")
+                                ) {
+                                    Icon(Icons.Default.Lock, contentDescription = "Verrouiller / Changer profil")
+                                }
                             }
                         }
-                        IconButton(
-                            onClick = { viewModel.lockSession() },
-                            modifier = Modifier.testTag("topbar_lock_btn")
-                        ) {
-                            Icon(Icons.Default.Lock, contentDescription = "Verrouiller / Changer profil", tint = OnDark)
-                        }
-                    }
-                )
+                    )
+                    HorizontalDivider(color = Slate800, thickness = 1.dp)
+                }
             },
             bottomBar = {
                 if (!isMediumOrExpanded) {
-                    NavigationBar(
-                        containerColor = Navy950,
-                        tonalElevation = 8.dp
-                    ) {
-                        primaryPhoneTabs.forEach { tab ->
-                            NavigationBarItem(
-                                selected = state.activeTab == tab.key,
-                                onClick = { viewModel.selectTab(tab.key) },
-                                icon = { Icon(tab.icon, contentDescription = tab.label) },
-                                label = {
-                                    Text(
-                                        tab.label,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = Amber500,
-                                    selectedTextColor = Amber500,
-                                    indicatorColor = Navy800,
-                                    unselectedIconColor = OnDark.copy(alpha = 0.72f),
-                                    unselectedTextColor = OnDark.copy(alpha = 0.72f)
-                                ),
-                                modifier = Modifier.testTag("nav_${tab.key}")
-                            )
-                        }
-                        if (overflowPhoneTabs.isNotEmpty()) {
-                            val isOverflowSelected = overflowPhoneTabs.any { it.key == state.activeTab }
-                            NavigationBarItem(
-                                selected = isOverflowSelected,
-                                onClick = { showMoreTabsSheet = true },
-                                icon = { Icon(Icons.Default.Menu, contentDescription = "Plus") },
-                                label = { Text("Plus", maxLines = 1, fontWeight = FontWeight.Bold) },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = Amber500,
-                                    selectedTextColor = Amber500,
-                                    indicatorColor = Navy800,
-                                    unselectedIconColor = OnDark.copy(alpha = 0.72f),
-                                    unselectedTextColor = OnDark.copy(alpha = 0.72f)
-                                ),
-                                modifier = Modifier.testTag("nav_more")
-                            )
+                    Column {
+                        HorizontalDivider(color = Slate800, thickness = 1.dp)
+                        NavigationBar(
+                            containerColor = Slate900,
+                            tonalElevation = 0.dp
+                        ) {
+                            primaryPhoneTabs.forEach { tab ->
+                                NavigationBarItem(
+                                    selected = state.activeTab == tab.key,
+                                    onClick = { viewModel.selectTab(tab.key) },
+                                    icon = { Icon(tab.icon, contentDescription = tab.label) },
+                                    label = {
+                                        Text(
+                                            tab.label,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    },
+                                    colors = NavigationBarItemDefaults.colors(
+                                        selectedIconColor = Cyan400,
+                                        selectedTextColor = Cyan400,
+                                        indicatorColor = Cyan950,
+                                        unselectedIconColor = Slate400,
+                                        unselectedTextColor = Slate400
+                                    ),
+                                    modifier = Modifier.testTag("nav_${tab.key}")
+                                )
+                            }
+                            if (overflowPhoneTabs.isNotEmpty()) {
+                                val isOverflowSelected = overflowPhoneTabs.any { it.key == state.activeTab }
+                                NavigationBarItem(
+                                    selected = isOverflowSelected,
+                                    onClick = { showMoreTabsSheet = true },
+                                    icon = { Icon(Icons.Default.Menu, contentDescription = "Plus") },
+                                    label = { Text("Plus", maxLines = 1, fontWeight = FontWeight.Bold) },
+                                    colors = NavigationBarItemDefaults.colors(
+                                        selectedIconColor = Cyan400,
+                                        selectedTextColor = Cyan400,
+                                        indicatorColor = Cyan950,
+                                        unselectedIconColor = Slate400,
+                                        unselectedTextColor = Slate400
+                                    ),
+                                    modifier = Modifier.testTag("nav_more")
+                                )
+                            }
                         }
                     }
                 }
@@ -425,7 +595,7 @@ private fun KaderPosSignedInContent(
             ) {
                 if (isMediumOrExpanded) {
                     NavigationRail(
-                        containerColor = Navy950,
+                        containerColor = Slate900,
                         modifier = Modifier
                             .fillMaxHeight()
                             .verticalScroll(rememberScrollState())
@@ -438,11 +608,11 @@ private fun KaderPosSignedInContent(
                                 icon = { Icon(tab.icon, contentDescription = tab.label) },
                                 label = { Text(tab.label, maxLines = 1, fontWeight = FontWeight.Bold) },
                                 colors = NavigationRailItemDefaults.colors(
-                                    selectedIconColor = Amber500,
-                                    selectedTextColor = Amber500,
-                                    indicatorColor = Navy800,
-                                    unselectedIconColor = OnDark.copy(alpha = 0.72f),
-                                    unselectedTextColor = OnDark.copy(alpha = 0.72f)
+                                    selectedIconColor = Cyan400,
+                                    selectedTextColor = Cyan400,
+                                    indicatorColor = Cyan950,
+                                    unselectedIconColor = Slate400,
+                                    unselectedTextColor = Slate400
                                 ),
                                 modifier = Modifier.testTag("rail_${tab.key}")
                             )
@@ -482,20 +652,25 @@ private fun KaderPosSignedInContent(
                     )
                     overflowPhoneTabs.forEach { tab ->
                         val isSel = state.activeTab == tab.key
-                        Surface(
+                        ElevatedCard(
+                            onClick = {
+                                viewModel.selectTab(tab.key)
+                                showMoreTabsSheet = false
+                            },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable {
-                                    viewModel.selectTab(tab.key)
-                                    showMoreTabsSheet = false
-                                }
                                 .testTag("more_nav_${tab.key}"),
-                            shape = RoundedCornerShape(14.dp),
-                            color = if (isSel) Navy950 else Slate900,
-                            border = BorderStroke(1.5.dp, if (isSel) Amber500 else Slate700)
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.elevatedCardColors(
+                                containerColor = if (isSel) Navy950 else Slate900,
+                                contentColor = if (isSel) OnDark else Slate100
+                            ),
+                            elevation = CardDefaults.elevatedCardElevation(defaultElevation = if (isSel) 4.dp else 2.dp)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 14.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
@@ -522,6 +697,8 @@ private fun KaderPosSignedInContent(
                 product = target.product,
                 editingCartItem = target.editingCartItem,
                 isOneTimeProduct = target.isOneTimeProduct,
+                canViewPrixAchat = effectivePerms.canViewPrixAchat,
+                canModifyPrices = effectivePerms.canModifyPrices,
                 onDismiss = { viewModel.closeCalculator() },
                 onConfirmProductCart = { product, cartons, pieces, m2Total, prixPerM2, bain, calibre, editId, prixPiece ->
                     viewModel.confirmCalculatorToCart(
@@ -548,6 +725,9 @@ private fun KaderPosSignedInContent(
                 storeInfo = state.storeInfo,
                 settings = state.settings,
                 autoEmailPdf = state.autoEmailPdf,
+                canHideInvoicePrices = effectivePerms.canHideInvoicePrices,
+                onToggleHidePrices = { id, hide -> viewModel.setInvoiceHidePrices(id, hide) },
+                onMarkWhatsappSent = { id -> viewModel.markInvoiceWhatsappSent(id) },
                 onUpdateSettings = { viewModel.saveSettings(it) },
                 onDismiss = { viewModel.closeInvoicePreview() }
             )
@@ -557,6 +737,7 @@ private fun KaderPosSignedInContent(
             NotificationsSheet(
                 notifications = state.notifications,
                 storeInfo = state.storeInfo,
+                onOpenInvoice = { invoiceId -> viewModel.openInvoiceById(invoiceId) },
                 onDismiss = { viewModel.closeNotificationsSheet() }
             )
         }
@@ -570,14 +751,17 @@ private fun ActiveTabContent(
     onSignInGoogle: suspend () -> String?,
     onSignOutGoogle: () -> Unit
 ) {
-    val user = state.currentUser
+    val perms = state.effectivePermissions
+    val canViewPrixAchat = perms.canViewPrixAchat
     when (state.activeTab) {
         "pos" -> PosScreen(
             products = state.products,
             cart = state.cart,
             freeLines = state.freeLines,
             customers = state.customers,
+            storeInfo = state.storeInfo,
             editingInvoice = state.editingInvoice,
+            canModifyPrices = perms.canModifyPrices,
             onOpenCalculatorForProduct = { viewModel.openProductCalculator(it) },
             onRequestDepotDispo = { viewModel.requestDepotAvailability(it) },
             onOpenOneTimeProduct = { viewModel.openOneTimeProductCalculator() },
@@ -599,7 +783,9 @@ private fun ActiveTabContent(
 
         "stock" -> StockScreen(
             products = state.products,
-            canModifyStock = user?.canModifyStock ?: false,
+            storeInfo = state.storeInfo,
+            canModifyStock = perms.canModifyStock,
+            canViewPrixAchat = canViewPrixAchat,
             onAdjustStock = { id, delta -> viewModel.adjustStock(id, delta) },
             onSetStock = { id, stock -> viewModel.setStock(id, stock) },
             onSaveProduct = { viewModel.saveProduct(it) },
@@ -608,8 +794,8 @@ private fun ActiveTabContent(
 
         "invoices" -> InvoicesScreen(
             invoices = state.invoices,
-            canEdit = user?.canEditInvoices ?: false,
-            canDelete = user?.canDeleteInvoices ?: false,
+            canEdit = perms.canEditInvoices,
+            canDelete = perms.canDeleteInvoices,
             onPreviewInvoice = { viewModel.openInvoicePreview(it) },
             onEditInvoice = { viewModel.startEditingInvoice(it) },
             onDeleteInvoice = { viewModel.deleteInvoice(it) }
@@ -617,7 +803,8 @@ private fun ActiveTabContent(
 
         "dashboard" -> DashboardScreen(
             invoices = state.invoices,
-            customers = state.customers
+            customers = state.customers,
+            canViewPrixAchat = canViewPrixAchat
         )
 
         "customers" -> CustomersScreen(
@@ -647,8 +834,11 @@ private fun ActiveTabContent(
         "users" -> UsersScreen(
             users = state.users,
             currentUser = state.currentUser,
+            rolePolicies = state.rolePolicies,
+            effectivePermissions = perms,
             onSaveUser = { viewModel.saveUser(it) },
-            onDeleteUser = { viewModel.deleteUser(it) }
+            onDeleteUser = { viewModel.deleteUser(it) },
+            onSaveRolePolicy = { viewModel.saveRolePolicy(it) }
         )
 
         "settings" -> SettingsScreen(
@@ -657,9 +847,15 @@ private fun ActiveTabContent(
             autoEmailPdf = state.autoEmailPdf,
             firebaseUserEmail = state.firebaseUserEmail,
             isCloudSynced = state.isCloudSynced,
+            isNetworkAvailable = state.isNetworkAvailable,
+            pendingCloudWrites = state.pendingCloudWrites,
             cloudSyncError = state.cloudSyncError,
+            depotWatchEnabled = state.depotWatchEnabled,
             onSignInGoogle = onSignInGoogle,
             onSignOutGoogle = onSignOutGoogle,
+            onRetryCloudSync = { viewModel.retryCloudSync() },
+            onToggleDepotWatch = { viewModel.setDepotWatchEnabled(it) },
+            onSendTestNotification = { viewModel.sendTestSystemNotification() },
             onSaveStoreInfo = { viewModel.saveStoreInfo(it) },
             onSaveSettings = { viewModel.saveSettings(it) },
             onSetAutoEmailPdf = { viewModel.setAutoEmailPdf(it) },
@@ -669,6 +865,21 @@ private fun ActiveTabContent(
         )
 
         "calculator" -> M2PerCartonCalculatorScreen(
+            products = state.products,
+            onAddProductToCart = { product, cartons, m2Total ->
+                viewModel.confirmCalculatorToCart(
+                    product = product,
+                    cartons = cartons,
+                    pieces = 0,
+                    m2Total = m2Total,
+                    prixPerM2 = product.prix,
+                    bain = "",
+                    calibre = "",
+                    editingItemId = null,
+                    prixPiece = 0.0
+                )
+                viewModel.selectTab("pos")
+            },
             onAddCalculatedLineToCart = { freeLine ->
                 viewModel.addFreeLine(freeLine)
                 viewModel.selectTab("pos")

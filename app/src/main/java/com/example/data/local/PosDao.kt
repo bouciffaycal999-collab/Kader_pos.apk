@@ -30,10 +30,10 @@ interface PosDao {
     @Query("DELETE FROM products")
     suspend fun clearProducts()
 
-    @Query("UPDATE products SET stock = MAX(0, stock + :delta) WHERE id = :id")
+    @Query("UPDATE products SET stock = stock + :delta WHERE id = :id")
     suspend fun adjustProductStock(id: String, delta: Int)
 
-    @Query("UPDATE products SET stock = MAX(0, :newStock) WHERE id = :id")
+    @Query("UPDATE products SET stock = :newStock WHERE id = :id")
     suspend fun setProductStock(id: String, newStock: Int)
 
     // Invoices
@@ -51,6 +51,12 @@ interface PosDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertInvoices(invoices: List<InvoiceEntity>)
+
+    @Query("UPDATE invoices SET whatsappSentBeforePrint = 1 WHERE id = :invoiceId")
+    suspend fun markInvoiceWhatsappSent(invoiceId: String)
+
+    @Query("UPDATE invoices SET hidePrices = :hide WHERE id = :invoiceId")
+    suspend fun updateInvoiceHidePrices(invoiceId: String, hide: Boolean)
 
     @Query("DELETE FROM invoices WHERE id = :id")
     suspend fun deleteInvoiceById(id: String)
@@ -166,6 +172,25 @@ interface PosDao {
 
     @Query("DELETE FROM staff_users")
     suspend fun clearUsers()
+
+    // Role Policies
+    @Query("SELECT * FROM role_policies")
+    fun observeRolePolicies(): Flow<List<RolePolicyEntity>>
+
+    @Query("SELECT * FROM role_policies")
+    suspend fun getRolePoliciesSnapshot(): List<RolePolicyEntity>
+
+    @Query("SELECT COUNT(*) FROM role_policies")
+    suspend fun countRolePolicies(): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRolePolicies(policies: List<RolePolicyEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertRolePolicy(policy: RolePolicyEntity)
+
+    @Query("DELETE FROM role_policies")
+    suspend fun clearRolePolicies()
 
     // Notifications
     @Query("SELECT * FROM notifications ORDER BY date DESC")

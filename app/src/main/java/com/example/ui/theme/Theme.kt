@@ -7,15 +7,15 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
 
-private val KaderLightColorScheme = lightColorScheme(
-    primary = Amber500,
+private val CeramicaLightColorScheme = lightColorScheme(
+    primary = Cyan500,
     onPrimary = OnDark,
-    primaryContainer = Amber950,
-    onPrimaryContainer = Amber300,
-    secondary = Cyan500,
+    primaryContainer = Cyan950,
+    onPrimaryContainer = Cyan300,
+    secondary = Amber500,
     onSecondary = OnDark,
-    secondaryContainer = Cyan950,
-    onSecondaryContainer = Cyan300,
+    secondaryContainer = Amber950,
+    onSecondaryContainer = Amber300,
     tertiary = Emerald500,
     onTertiary = OnDark,
     tertiaryContainer = Emerald950,
@@ -39,9 +39,9 @@ private val KaderLightColorScheme = lightColorScheme(
     surfaceContainerHighest = Slate700
 )
 
-val KaderShapes = Shapes(
-    small = RoundedCornerShape(14.dp),
-    medium = RoundedCornerShape(18.dp),
+val CeramicaShapes = Shapes(
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp),
     large = RoundedCornerShape(22.dp),
     extraLarge = RoundedCornerShape(28.dp)
 )
@@ -51,9 +51,9 @@ fun KaderPosTheme(
     content: @Composable () -> Unit
 ) {
     MaterialTheme(
-        colorScheme = KaderLightColorScheme,
+        colorScheme = CeramicaLightColorScheme,
         typography = Typography,
-        shapes = KaderShapes,
+        shapes = CeramicaShapes,
         content = content
     )
 }

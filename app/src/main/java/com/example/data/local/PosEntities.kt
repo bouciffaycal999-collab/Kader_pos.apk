@@ -11,11 +11,14 @@ import com.example.data.model.DepotNotification
 import com.example.data.model.FreeLineItem
 import com.example.data.model.Invoice
 import com.example.data.model.InvoiceClient
+import com.example.data.model.PosSeeds
+import com.example.data.model.RolePolicy
 import com.example.data.model.StaffUser
 import com.example.data.model.StoreInfo
 import com.example.data.model.Supplier
 import com.example.data.model.SupplierMovement
 import com.example.data.model.TileProduct
+import com.example.data.model.WaRecipient
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -36,7 +39,9 @@ data class ProductEntity(
     val finition: String,
     val choix: String,
     val categorie: String,
-    val description: String
+    val description: String,
+    val pricingUnit: String = "carton",
+    val prixPiece: Double = 0.0
 )
 
 @Entity(tableName = "invoices")
@@ -56,7 +61,10 @@ data class InvoiceEntity(
     val resteAPayer: Double,
     val modePaiement: String,
     val statut: String,
-    val notes: String
+    val notes: String,
+    val vendeurTel: String = "",
+    val hidePrices: Boolean = false,
+    val whatsappSentBeforePrint: Boolean = false
 )
 
 @Entity(tableName = "customers")
@@ -134,7 +142,26 @@ data class StaffUserEntity(
     val canViewSuppliers: Boolean,
     val canViewCaisse: Boolean,
     val canManageUsers: Boolean,
-    val active: Boolean
+    val active: Boolean,
+    val phone: String = "",
+    val canViewPrixAchat: Boolean = false,
+    val canModifyPrices: Boolean = false
+)
+
+@Entity(tableName = "role_policies")
+data class RolePolicyEntity(
+    @PrimaryKey val roleId: String,
+    val displayName: String,
+    val description: String,
+    val canViewPrixAchat: Boolean,
+    val canModifyPrices: Boolean,
+    val canModifyStock: Boolean,
+    val canEditInvoices: Boolean,
+    val canDeleteInvoices: Boolean,
+    val canViewSuppliers: Boolean,
+    val canViewCaisse: Boolean,
+    val canManageUsers: Boolean,
+    val allowedTabsJson: String
 )
 
 @Entity(tableName = "notifications")
@@ -162,13 +189,45 @@ data class AppKvEntity(
 
 object PosJsonMapper {
     fun TileProduct.toEntity() = ProductEntity(
-        id, name, usine, dimension, m2Carton, pcs, prix, prixAchat,
-        stock, color, colorName, image, finition, choix, categorie, description
+        id = id,
+        name = name,
+        usine = usine,
+        dimension = dimension,
+        m2Carton = m2Carton,
+        pcs = pcs,
+        prix = prix,
+        prixAchat = prixAchat,
+        stock = stock,
+        color = color,
+        colorName = colorName,
+        image = image,
+        finition = finition,
+        choix = choix,
+        categorie = categorie,
+        description = description,
+        pricingUnit = pricingUnit,
+        prixPiece = prixPiece
     )
 
     fun ProductEntity.toModel() = TileProduct(
-        id, name, usine, dimension, m2Carton, pcs, prix, prixAchat,
-        stock, color, colorName, image, finition, choix, categorie, description
+        id = id,
+        name = name,
+        usine = usine,
+        dimension = dimension,
+        m2Carton = m2Carton,
+        pcs = pcs,
+        prix = prix,
+        prixAchat = prixAchat,
+        stock = stock,
+        color = color,
+        colorName = colorName,
+        image = image,
+        finition = finition,
+        choix = choix,
+        categorie = categorie,
+        description = description,
+        pricingUnit = pricingUnit.ifBlank { "carton" },
+        prixPiece = prixPiece
     )
 
     fun Customer.toEntity() = CustomerEntity(id, nom, tel, adresse, dette, totalAchats)
@@ -231,16 +290,66 @@ object PosJsonMapper {
         canViewSuppliers = canViewSuppliers,
         canViewCaisse = canViewCaisse,
         canManageUsers = canManageUsers,
-        active = active
+        active = active,
+        phone = phone,
+        canViewPrixAchat = canViewPrixAchat,
+        canModifyPrices = canModifyPrices
     )
 
     fun StaffUserEntity.toModel(): StaffUser {
         val arr = runCatching { JSONArray(allowedTabsJson) }.getOrDefault(JSONArray())
         val tabs = List(arr.length()) { arr.optString(it) }.filter { it.isNotBlank() }
         return StaffUser(
-            id, name, role, pin, magasin, tabs,
-            canEditInvoices, canDeleteInvoices, canModifyStock,
-            canViewSuppliers, canViewCaisse, canManageUsers, active
+            id = id,
+            name = name,
+            role = role,
+            pin = pin,
+            magasin = magasin,
+            allowedTabs = tabs,
+            canEditInvoices = canEditInvoices,
+            canDeleteInvoices = canDeleteInvoices,
+            canModifyStock = canModifyStock,
+            canViewSuppliers = canViewSuppliers,
+            canViewCaisse = canViewCaisse,
+            canManageUsers = canManageUsers,
+            active = active,
+            phone = phone,
+            canViewPrixAchat = canViewPrixAchat,
+            canModifyPrices = canModifyPrices
+        )
+    }
+
+    fun RolePolicy.toEntity() = RolePolicyEntity(
+        roleId = roleId,
+        displayName = displayName,
+        description = description,
+        canViewPrixAchat = canViewPrixAchat,
+        canModifyPrices = canModifyPrices,
+        canModifyStock = canModifyStock,
+        canEditInvoices = canEditInvoices,
+        canDeleteInvoices = canDeleteInvoices,
+        canViewSuppliers = canViewSuppliers,
+        canViewCaisse = canViewCaisse,
+        canManageUsers = canManageUsers,
+        allowedTabsJson = JSONArray(allowedTabs).toString()
+    )
+
+    fun RolePolicyEntity.toModel(): RolePolicy {
+        val arr = runCatching { JSONArray(allowedTabsJson) }.getOrDefault(JSONArray())
+        val tabs = List(arr.length()) { arr.optString(it) }.filter { it.isNotBlank() }
+        return RolePolicy(
+            roleId = roleId,
+            displayName = displayName,
+            description = description,
+            canViewPrixAchat = canViewPrixAchat,
+            canModifyPrices = canModifyPrices,
+            canModifyStock = canModifyStock,
+            canEditInvoices = canEditInvoices,
+            canDeleteInvoices = canDeleteInvoices,
+            canViewSuppliers = canViewSuppliers,
+            canViewCaisse = canViewCaisse,
+            canManageUsers = canManageUsers,
+            allowedTabs = tabs
         )
     }
 
@@ -267,6 +376,7 @@ object PosJsonMapper {
                 put("colorName", item.colorName)
                 put("image", item.image)
                 put("prixPiece", item.prixPiece)
+                put("pricingUnit", item.pricingUnit)
             })
         }
         return arr.toString()
@@ -297,7 +407,8 @@ object PosJsonMapper {
                         color = o.optString("color", "#94a3b8"),
                         colorName = o.optString("colorName"),
                         image = o.optString("image"),
-                        prixPiece = o.optDouble("prixPiece", 0.0)
+                        prixPiece = o.optDouble("prixPiece", 0.0),
+                        pricingUnit = o.optString("pricingUnit", "carton").ifBlank { "carton" }
                     )
                 )
             }
@@ -372,7 +483,10 @@ object PosJsonMapper {
         resteAPayer = resteAPayer,
         modePaiement = modePaiement,
         statut = statut,
-        notes = notes
+        notes = notes,
+        vendeurTel = vendeurTel,
+        hidePrices = hidePrices,
+        whatsappSentBeforePrint = whatsappSentBeforePrint
     )
 
     fun InvoiceEntity.toModel() = Invoice(
@@ -391,8 +505,30 @@ object PosJsonMapper {
         resteAPayer = resteAPayer,
         modePaiement = modePaiement,
         statut = statut,
-        notes = notes
+        notes = notes,
+        vendeurTel = vendeurTel,
+        hidePrices = hidePrices,
+        whatsappSentBeforePrint = whatsappSentBeforePrint
     )
+
+    private fun waRecipientsToJsonArray(list: List<WaRecipient>): JSONArray = JSONArray().apply {
+        list.forEach { r ->
+            put(JSONObject().apply {
+                put("name", r.name)
+                put("phone", r.phone)
+            })
+        }
+    }
+
+    private fun jsonArrayToWaRecipients(arr: JSONArray?, fallback: List<WaRecipient>): List<WaRecipient> {
+        if (arr == null) return fallback
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                add(WaRecipient(name = o.optString("name"), phone = o.optString("phone")))
+            }
+        }
+    }
 
     fun storeInfoToJson(info: StoreInfo): String = JSONObject().apply {
         put("nom", info.nom)
@@ -406,6 +542,8 @@ object PosJsonMapper {
         put("nif", info.nif)
         put("nis", info.nis)
         put("ai", info.ai)
+        put("invoiceWaRecipients", waRecipientsToJsonArray(info.invoiceWaRecipients))
+        put("dispoWaRecipients", waRecipientsToJsonArray(info.dispoWaRecipients))
     }.toString()
 
     fun jsonToStoreInfo(json: String, fallback: StoreInfo): StoreInfo {
@@ -421,7 +559,15 @@ object PosJsonMapper {
             rc = o.optString("rc", fallback.rc),
             nif = o.optString("nif", fallback.nif),
             nis = o.optString("nis", fallback.nis),
-            ai = o.optString("ai", fallback.ai)
+            ai = o.optString("ai", fallback.ai),
+            invoiceWaRecipients = jsonArrayToWaRecipients(
+                o.optJSONArray("invoiceWaRecipients"),
+                PosSeeds.DEFAULT_INVOICE_WA_RECIPIENTS
+            ),
+            dispoWaRecipients = jsonArrayToWaRecipients(
+                o.optJSONArray("dispoWaRecipients"),
+                PosSeeds.DEFAULT_DISPO_WA_RECIPIENTS
+            )
         )
     }
 
@@ -433,6 +579,8 @@ object PosJsonMapper {
         put("touchFriendlyMode", s.touchFriendlyMode)
         put("activeStore", s.activeStore)
         put("enableSoundAlerts", s.enableSoundAlerts)
+        put("deviceSellerName", s.deviceSellerName)
+        put("deviceSellerPhone", s.deviceSellerPhone)
     }.toString()
 
     fun jsonToSettings(json: String, fallback: AppSettings): AppSettings {
@@ -444,7 +592,9 @@ object PosJsonMapper {
             colorTheme = o.optString("colorTheme", fallback.colorTheme),
             touchFriendlyMode = o.optBoolean("touchFriendlyMode", fallback.touchFriendlyMode),
             activeStore = o.optString("activeStore", fallback.activeStore),
-            enableSoundAlerts = o.optBoolean("enableSoundAlerts", fallback.enableSoundAlerts)
+            enableSoundAlerts = o.optBoolean("enableSoundAlerts", fallback.enableSoundAlerts),
+            deviceSellerName = o.optString("deviceSellerName", fallback.deviceSellerName),
+            deviceSellerPhone = o.optString("deviceSellerPhone", fallback.deviceSellerPhone)
         )
     }
 }

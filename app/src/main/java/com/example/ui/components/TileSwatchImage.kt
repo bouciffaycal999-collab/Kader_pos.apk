@@ -179,7 +179,7 @@ fun ProductPhotoLightboxDialog(
                 .testTag("product_photo_lightbox"),
             shape = RoundedCornerShape(24.dp),
             color = Slate900,
-            border = BorderStroke(2.dp, Navy950)
+            border = BorderStroke(1.5.dp, Slate700)
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
@@ -188,19 +188,20 @@ fun ProductPhotoLightboxDialog(
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
-                    color = Navy950
+                    color = Slate950,
+                    border = BorderStroke(1.dp, Slate700)
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
                         Text(
                             text = product.name,
                             style = MaterialTheme.typography.titleLarge,
-                            color = OnDark,
+                            color = Navy950,
                             fontWeight = FontWeight.Black
                         )
                         Text(
                             text = "${product.usine} • ${product.dimension} • ${product.finition.uppercase()} • ${product.choix}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Amber500,
+                            color = Cyan500,
                             fontWeight = FontWeight.Bold
                         )
                     }

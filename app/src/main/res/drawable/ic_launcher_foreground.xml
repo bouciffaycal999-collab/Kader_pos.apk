@@ -3,6 +3,6 @@
     <item
         android:width="66dp"
         android:height="66dp"
-        android:drawable="@drawable/ic_launcher_art_1794509022564"
+        android:drawable="@drawable/ic_ceramica_icon_1794528680416"
         android:gravity="center" />
 </layer-list>

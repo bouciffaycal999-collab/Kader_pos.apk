@@ -111,7 +111,7 @@ fun StaffLockScreen(
 
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "KADER CERAMIC POS",
+                        text = "CERAMICA POS",
                         style = MaterialTheme.typography.headlineMedium,
                         color = Navy950,
                         fontWeight = FontWeight.Black
@@ -165,9 +165,14 @@ fun StaffLockScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = user.magasin,
+                                    text = when (user.role) {
+                                        "admin" -> "Admin"
+                                        "gerant" -> "Owner & Gérant"
+                                        else -> "Vendeur"
+                                    },
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (isSel) Amber500 else Slate400
+                                    color = if (isSel) Amber500 else Slate400,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
                         }
@@ -250,7 +255,14 @@ fun StaffLockScreen(
                             if (pinBuffer != user.pin) pinBuffer = ""
                         }
                     },
-                    validateLabel = "Déverrouiller (${selectedUser?.role?.uppercase() ?: "OK"})",
+                    validateLabel = "Déverrouiller (${
+                        when (selectedUser?.role) {
+                            "admin" -> "ADMIN"
+                            "gerant" -> "OWNER & GÉRANT"
+                            "vendeur" -> "VENDEUR"
+                            else -> "OK"
+                        }
+                    })",
                     accentColor = Amber500
                 )
             }

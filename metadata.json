@@ -1,6 +1,6 @@
 {
-  "name": "Kader POS",
-  "description": "Ceramic tile POS, smart m² per carton calculator, stock management, invoices, and multi-store cash register for Kader Ceramic.",
+  "name": "Ceramica",
+  "description": "Ceramic tile POS, smart m² per carton calculator, eco-ink bilingual invoicing, live stock management, and multi-store cash register for CERAMICA.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

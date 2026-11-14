@@ -16,6 +16,7 @@ import com.example.data.model.DepotNotification
 import com.example.data.model.FreeLineItem
 import com.example.data.model.Invoice
 import com.example.data.model.PosSeeds
+import com.example.data.model.RolePolicy
 import com.example.data.model.StaffUser
 import com.example.data.model.StoreInfo
 import com.example.data.model.Supplier
@@ -42,7 +43,15 @@ data class SaleCommitResult(
     val updatedCustomer: Customer?,
     val notification: DepotNotification,
     val updatedProductStocks: Map<String, Int>,
-    val extraNotifications: List<DepotNotification> = emptyList()
+    val extraNotifications: List<DepotNotification> = emptyList(),
+    val stockDeltas: Map<String, Int> = emptyMap()
+)
+
+data class DeleteInvoiceCommitResult(
+    val restoredProductStocks: Map<String, Int>,
+    val restoredStockDeltas: Map<String, Int>,
+    val updatedCustomer: Customer?,
+    val notification: DepotNotification?
 )
 
 class PosRepository(
@@ -58,6 +67,7 @@ class PosRepository(
         private const val KV_SETTINGS = "app_settings"
         private const val KV_CURRENT_USER_ID = "current_user_id"
         private const val KV_AUTO_EMAIL_PDF = "auto_email_pdf"
+        private const val KV_PENDING_OFFLINE_SYNC = "pending_offline_sync"
     }
 
     val productsFlow: Flow<List<TileProduct>> =
@@ -91,6 +101,17 @@ class PosRepository(
     val usersFlow: Flow<List<StaffUser>> =
         dao.observeUsers().map { list -> list.map { it.toModel() } }
             .flowOn(Dispatchers.Default).distinctUntilChanged()
+
+    val rolePoliciesFlow: Flow<List<RolePolicy>> =
+        dao.observeRolePolicies().map { list ->
+            list.map { it.toModel() }.sortedBy { policy ->
+                when (policy.roleId) {
+                    "admin" -> 0
+                    "gerant" -> 1
+                    else -> 2
+                }
+            }
+        }.flowOn(Dispatchers.Default).distinctUntilChanged()
 
     val notificationsFlow: Flow<List<DepotNotification>> =
         dao.observeNotifications().map { list -> list.map { it.toModel() } }
@@ -135,6 +156,9 @@ class PosRepository(
         }
         if (dao.countUsers() == 0) {
             dao.insertUsers(PosSeeds.DEFAULT_USERS.map { it.toEntity() })
+        }
+        if (dao.countRolePolicies() == 0) {
+            dao.insertRolePolicies(PosSeeds.DEFAULT_ROLE_POLICIES.map { it.toEntity() })
         }
         if (dao.countCustomers() == 0) {
             dao.insertCustomers(PosSeeds.DEFAULT_CUSTOMERS.map { it.toEntity() })
@@ -193,7 +217,9 @@ class PosRepository(
                             finition = o.optString("finition", "brillant"),
                             choix = choix,
                             categorie = o.optString("categorie", "sol"),
-                            description = desc
+                            description = desc,
+                            pricingUnit = o.optString("pricingUnit", "carton").ifBlank { "carton" },
+                            prixPiece = o.optDouble("prixPiece", 0.0)
                         )
                     )
                 }
@@ -207,6 +233,9 @@ class PosRepository(
     }
     suspend fun getUsersSnapshot(): List<StaffUser> = withContext(Dispatchers.IO) {
         dao.getUsersSnapshot().map { it.toModel() }
+    }
+    suspend fun getRolePoliciesSnapshot(): List<RolePolicy> = withContext(Dispatchers.IO) {
+        dao.getRolePoliciesSnapshot().map { it.toModel() }
     }
     suspend fun getCustomersSnapshot(): List<Customer> = withContext(Dispatchers.IO) {
         dao.getCustomersSnapshot().map { it.toModel() }
@@ -340,6 +369,18 @@ class PosRepository(
         }
     }
 
+    suspend fun replaceRolePoliciesFromCloud(items: List<RolePolicy>) = withContext(Dispatchers.IO) {
+        val next = items.map { it.toEntity() }
+        val existing = dao.getRolePoliciesSnapshot()
+        if (existing.size == next.size && existing.associateBy { it.roleId } == next.associateBy { it.roleId }) {
+            return@withContext
+        }
+        db.withTransaction {
+            dao.clearRolePolicies()
+            dao.insertRolePolicies(next)
+        }
+    }
+
     suspend fun replaceNotificationsFromCloud(items: List<DepotNotification>) = withContext(Dispatchers.IO) {
         val next = items.map { it.toEntity() }
         val existing = dao.getNotificationsSnapshot()
@@ -384,9 +425,8 @@ class PosRepository(
     }
 
     suspend fun setProductStock(productId: String, stock: Int): Int = withContext(Dispatchers.IO) {
-        val safeStock = stock.coerceAtLeast(0)
-        dao.setProductStock(productId, safeStock)
-        safeStock
+        dao.setProductStock(productId, stock)
+        stock
     }
 
     suspend fun upsertProduct(product: TileProduct) = withContext(Dispatchers.IO) {
@@ -405,11 +445,14 @@ class PosRepository(
         val extraNotifications = mutableListOf<DepotNotification>()
         lateinit var createdNotification: DepotNotification
 
+        val stockDeltas = mutableMapOf<String, Int>()
         db.withTransaction {
             dao.upsertInvoice(invoice.toEntity())
             invoice.articles.forEach { item ->
-                if (!item.productId.startsWith("onetime_") && item.cartons > 0) {
-                    dao.adjustProductStock(item.productId, -item.cartons)
+                val deduct = itemStockCartons(item)
+                if (!item.productId.startsWith("onetime_") && deduct > 0) {
+                    dao.adjustProductStock(item.productId, -deduct)
+                    stockDeltas[item.productId] = (stockDeltas[item.productId] ?: 0) - deduct
                 }
             }
             val currentProducts = dao.getProductsSnapshot()
@@ -489,7 +532,8 @@ class PosRepository(
             updatedCustomer = updatedCustomer,
             notification = createdNotification,
             updatedProductStocks = updatedStocks,
-            extraNotifications = extraNotifications
+            extraNotifications = extraNotifications,
+            stockDeltas = stockDeltas
         )
     }
 
@@ -504,17 +548,20 @@ class PosRepository(
         val extraNotifications = mutableListOf<DepotNotification>()
         lateinit var modifNotification: DepotNotification
 
+        val stockDeltas = mutableMapOf<String, Int>()
         db.withTransaction {
             val prevQty = mutableMapOf<String, Int>()
             previousInvoice.articles.forEach { item ->
-                if (!item.productId.startsWith("onetime_") && item.cartons > 0) {
-                    prevQty[item.productId] = (prevQty[item.productId] ?: 0) + item.cartons
+                val qty = itemStockCartons(item)
+                if (!item.productId.startsWith("onetime_") && qty > 0) {
+                    prevQty[item.productId] = (prevQty[item.productId] ?: 0) + qty
                 }
             }
             val nextQty = mutableMapOf<String, Int>()
             updatedInvoice.articles.forEach { item ->
-                if (!item.productId.startsWith("onetime_") && item.cartons > 0) {
-                    nextQty[item.productId] = (nextQty[item.productId] ?: 0) + item.cartons
+                val qty = itemStockCartons(item)
+                if (!item.productId.startsWith("onetime_") && qty > 0) {
+                    nextQty[item.productId] = (nextQty[item.productId] ?: 0) + qty
                 }
             }
             val allProdIds = (prevQty.keys + nextQty.keys).distinct()
@@ -522,6 +569,7 @@ class PosRepository(
                 val delta = (prevQty[pid] ?: 0) - (nextQty[pid] ?: 0)
                 if (delta != 0) {
                     dao.adjustProductStock(pid, delta)
+                    stockDeltas[pid] = delta
                 }
             }
             val currentProducts = dao.getProductsSnapshot()
@@ -605,15 +653,17 @@ class PosRepository(
             updatedCustomer = updatedCustomer,
             notification = modifNotification,
             updatedProductStocks = updatedStocks,
-            extraNotifications = extraNotifications
+            extraNotifications = extraNotifications,
+            stockDeltas = stockDeltas
         )
     }
 
     suspend fun deleteInvoiceWithReconcile(
         invoiceId: String,
         actorName: String
-    ): Triple<Map<String, Int>, Customer?, DepotNotification?> = withContext(Dispatchers.IO) {
+    ): DeleteInvoiceCommitResult = withContext(Dispatchers.IO) {
         val restoredStocks = mutableMapOf<String, Int>()
+        val restoredDeltas = mutableMapOf<String, Int>()
         var updatedCustomer: Customer? = null
         var notif: DepotNotification? = null
 
@@ -621,8 +671,10 @@ class PosRepository(
             val inv = dao.getInvoiceById(invoiceId)?.toModel()
             if (inv != null) {
                 inv.articles.forEach { item ->
-                    if (!item.productId.startsWith("onetime_") && item.cartons > 0) {
-                        dao.adjustProductStock(item.productId, item.cartons)
+                    val qty = itemStockCartons(item)
+                    if (!item.productId.startsWith("onetime_") && qty > 0) {
+                        dao.adjustProductStock(item.productId, qty)
+                        restoredDeltas[item.productId] = (restoredDeltas[item.productId] ?: 0) + qty
                     }
                 }
                 val products = dao.getProductsSnapshot()
@@ -666,7 +718,12 @@ class PosRepository(
             }
             dao.deleteInvoiceById(invoiceId)
         }
-        Triple(restoredStocks, updatedCustomer, notif)
+        DeleteInvoiceCommitResult(
+            restoredProductStocks = restoredStocks,
+            restoredStockDeltas = restoredDeltas,
+            updatedCustomer = updatedCustomer,
+            notification = notif
+        )
     }
 
     suspend fun recordStockNotification(
@@ -726,7 +783,7 @@ class PosRepository(
         actor: String,
         site: String
     ): DepotNotification {
-        val statusText = if (product.stock <= 0) "RUPTURE DE STOCK (0 ctn)" else "STOCK CRITIQUE (${product.stock} ctn restants)"
+        val statusText = if (product.stock <= 0) "RUPTURE DE STOCK (${product.stock} ctn)" else "STOCK CRITIQUE (${product.stock} ctn restants)"
         return DepotNotification(
             id = "notif_${System.currentTimeMillis()}_${shortId()}",
             invoiceId = sanitizeRuleId(product.id, "alert_${shortId()}"),
@@ -742,6 +799,22 @@ class PosRepository(
             articlesSummary = "$statusText — ${product.name} (${product.usine})".take(980),
             read = false
         )
+    }
+
+    private fun itemStockCartons(item: CartItem): Int {
+        if (item.cartons > 0) return item.cartons
+        if (item.pieces > 0) {
+            return kotlin.math.ceil(item.pieces.toDouble() / item.pcs.coerceAtLeast(1)).toInt().coerceAtLeast(1)
+        }
+        return 0
+    }
+
+    suspend fun markInvoiceWhatsappSent(invoiceId: String) = withContext(Dispatchers.IO) {
+        dao.markInvoiceWhatsappSent(invoiceId)
+    }
+
+    suspend fun updateInvoiceHidePrices(invoiceId: String, hide: Boolean) = withContext(Dispatchers.IO) {
+        dao.updateInvoiceHidePrices(invoiceId, hide)
     }
 
     private fun sanitizeRuleId(raw: String, fallback: String): String {
@@ -896,6 +969,10 @@ class PosRepository(
         dao.deleteUserById(userId)
     }
 
+    suspend fun upsertRolePolicy(policy: RolePolicy) = withContext(Dispatchers.IO) {
+        dao.upsertRolePolicy(policy.toEntity())
+    }
+
     // Store Info & Settings
     suspend fun saveStoreInfo(info: StoreInfo) = withContext(Dispatchers.IO) {
         val json = PosJsonMapper.storeInfoToJson(info)
@@ -913,6 +990,17 @@ class PosRepository(
 
     suspend fun setAutoEmailPdf(enabled: Boolean) = withContext(Dispatchers.IO) {
         dao.putKv(AppKvEntity(KV_AUTO_EMAIL_PDF, if (enabled) "true" else "false"))
+    }
+
+    suspend fun hasPendingOfflineSync(): Boolean = withContext(Dispatchers.IO) {
+        dao.getKv(KV_PENDING_OFFLINE_SYNC)?.jsonValue == "true"
+    }
+
+    suspend fun setPendingOfflineSync(pending: Boolean) = withContext(Dispatchers.IO) {
+        val nextVal = if (pending) "true" else "false"
+        if (dao.getKv(KV_PENDING_OFFLINE_SYNC)?.jsonValue != nextVal) {
+            dao.putKv(AppKvEntity(KV_PENDING_OFFLINE_SYNC, nextVal))
+        }
     }
 
     // Backup Export / Import JSON
@@ -943,6 +1031,8 @@ class PosRepository(
                     put("choix", p.choix)
                     put("categorie", p.categorie)
                     put("description", p.description)
+                    put("pricingUnit", p.pricingUnit)
+                    put("prixPiece", p.prixPiece)
                 })
             }
         }
@@ -954,6 +1044,7 @@ class PosRepository(
                     put("reference", inv.reference)
                     put("date", inv.date)
                     put("vendeur", inv.vendeur)
+                    put("vendeurTel", inv.vendeurTel)
                     put("magasin", inv.magasin)
                     put("client", JSONObject(inv.clientJson))
                     put("articles", JSONArray(inv.articlesJson))
@@ -966,6 +1057,8 @@ class PosRepository(
                     put("modePaiement", inv.modePaiement)
                     put("statut", inv.statut)
                     put("notes", inv.notes)
+                    put("hidePrices", inv.hidePrices)
+                    put("whatsappSentBeforePrint", inv.whatsappSentBeforePrint)
                 })
             }
         }
@@ -1028,6 +1121,28 @@ class PosRepository(
                     put("canViewCaisse", u.canViewCaisse)
                     put("canManageUsers", u.canManageUsers)
                     put("active", u.active)
+                    put("phone", u.phone)
+                    put("canViewPrixAchat", u.canViewPrixAchat)
+                    put("canModifyPrices", u.canModifyPrices)
+                })
+            }
+        }
+
+        val rolePoliciesArr = JSONArray().apply {
+            dao.getRolePoliciesSnapshot().forEach { rp ->
+                put(JSONObject().apply {
+                    put("roleId", rp.roleId)
+                    put("displayName", rp.displayName)
+                    put("description", rp.description)
+                    put("canViewPrixAchat", rp.canViewPrixAchat)
+                    put("canModifyPrices", rp.canModifyPrices)
+                    put("canModifyStock", rp.canModifyStock)
+                    put("canEditInvoices", rp.canEditInvoices)
+                    put("canDeleteInvoices", rp.canDeleteInvoices)
+                    put("canViewSuppliers", rp.canViewSuppliers)
+                    put("canViewCaisse", rp.canViewCaisse)
+                    put("canManageUsers", rp.canManageUsers)
+                    put("allowedTabs", JSONArray(rp.allowedTabsJson))
                 })
             }
         }
@@ -1042,6 +1157,7 @@ class PosRepository(
             put("suppliers", suppliersArr)
             put("caisse", caisseArr)
             put("users", usersArr)
+            put("rolePolicies", rolePoliciesArr)
         }.toString(2)
     }
 
@@ -1076,7 +1192,9 @@ class PosRepository(
                                     finition = o.optString("finition", "brillant"),
                                     choix = o.optString("choix", "1er Choix"),
                                     categorie = o.optString("categorie", "sol"),
-                                    description = o.optString("description", "")
+                                    description = o.optString("description", ""),
+                                    pricingUnit = o.optString("pricingUnit", "carton").ifBlank { "carton" },
+                                    prixPiece = o.optDouble("prixPiece", 0.0)
                                 ).toEntity()
                             )
                         }
@@ -1173,7 +1291,10 @@ class PosRepository(
                                     resteAPayer = o.optDouble("resteAPayer", 0.0),
                                     modePaiement = o.optString("modePaiement", "Espèces"),
                                     statut = o.optString("statut", "Payé"),
-                                    notes = o.optString("notes", "")
+                                    notes = o.optString("notes", ""),
+                                    vendeurTel = o.optString("vendeurTel", ""),
+                                    hidePrices = o.optBoolean("hidePrices", false),
+                                    whatsappSentBeforePrint = o.optBoolean("whatsappSentBeforePrint", false)
                                 ).toEntity()
                             )
                         }
@@ -1187,11 +1308,13 @@ class PosRepository(
                             val o = arr.optJSONObject(i) ?: continue
                             val tabsArr = o.optJSONArray("allowedTabs") ?: JSONArray()
                             val tabs = List(tabsArr.length()) { tabsArr.optString(it) }.filter { it.isNotBlank() }
+                            val role = o.optString("role", "vendeur")
+                            val isPrivileged = role == "admin" || role == "gerant"
                             add(
                                 StaffUser(
                                     id = o.optString("id"),
                                     name = o.optString("name"),
-                                    role = o.optString("role", "vendeur"),
+                                    role = role,
                                     pin = o.optString("pin", "0000"),
                                     magasin = o.optString("magasin", "Depot Remchi"),
                                     allowedTabs = tabs,
@@ -1201,7 +1324,10 @@ class PosRepository(
                                     canViewSuppliers = o.optBoolean("canViewSuppliers", false),
                                     canViewCaisse = o.optBoolean("canViewCaisse", false),
                                     canManageUsers = o.optBoolean("canManageUsers", false),
-                                    active = o.optBoolean("active", true)
+                                    active = o.optBoolean("active", true),
+                                    phone = o.optString("phone", ""),
+                                    canViewPrixAchat = o.optBoolean("canViewPrixAchat", isPrivileged),
+                                    canModifyPrices = o.optBoolean("canModifyPrices", isPrivileged)
                                 ).toEntity()
                             )
                         }
@@ -1209,6 +1335,35 @@ class PosRepository(
                     if (list.isNotEmpty()) {
                         dao.clearUsers()
                         dao.insertUsers(list)
+                    }
+                }
+                root.optJSONArray("rolePolicies")?.let { arr ->
+                    val list = buildList {
+                        for (i in 0 until arr.length()) {
+                            val o = arr.optJSONObject(i) ?: continue
+                            val tabsArr = o.optJSONArray("allowedTabs") ?: JSONArray()
+                            val tabs = List(tabsArr.length()) { tabsArr.optString(it) }.filter { it.isNotBlank() }
+                            add(
+                                RolePolicy(
+                                    roleId = o.optString("roleId", "vendeur"),
+                                    displayName = o.optString("displayName"),
+                                    description = o.optString("description"),
+                                    canViewPrixAchat = o.optBoolean("canViewPrixAchat", false),
+                                    canModifyPrices = o.optBoolean("canModifyPrices", false),
+                                    canModifyStock = o.optBoolean("canModifyStock", false),
+                                    canEditInvoices = o.optBoolean("canEditInvoices", true),
+                                    canDeleteInvoices = o.optBoolean("canDeleteInvoices", false),
+                                    canViewSuppliers = o.optBoolean("canViewSuppliers", false),
+                                    canViewCaisse = o.optBoolean("canViewCaisse", false),
+                                    canManageUsers = o.optBoolean("canManageUsers", false),
+                                    allowedTabs = tabs
+                                ).toEntity()
+                            )
+                        }
+                    }
+                    if (list.isNotEmpty()) {
+                        dao.clearRolePolicies()
+                        dao.insertRolePolicies(list)
                     }
                 }
             }

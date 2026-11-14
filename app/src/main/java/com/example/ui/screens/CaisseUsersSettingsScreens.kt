@@ -1,13 +1,17 @@
 package com.example.ui.screens
 
+import android.Manifest
 import android.content.Intent
+import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -35,10 +39,13 @@ import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Login
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PointOfSale
+import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
@@ -47,7 +54,9 @@ import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Warehouse
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -64,16 +73,21 @@ import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
@@ -81,13 +95,18 @@ import com.example.data.model.AppSettings
 import com.example.data.model.CaisseMovement
 import com.example.data.model.DailyCaisseCount
 import com.example.data.model.DepotNotification
+import com.example.data.model.EffectivePermissions
 import com.example.data.model.PosSeeds
+import com.example.data.model.RolePolicy
 import com.example.data.model.StaffUser
 import com.example.data.model.StoreInfo
+import com.example.data.model.WaRecipient
 import com.example.data.model.formatDa
+import com.example.util.SaleSystemNotifier
 import com.example.data.model.formatM2
 import com.example.data.model.toDzWhatsAppDigits
 import com.example.ui.components.ClearableOutlinedTextField
+import com.example.ui.components.InvoicePdfGenerator
 import com.example.ui.components.NonImeNumericKeypad
 import com.example.ui.components.NumericDisplayField
 import com.example.ui.components.applyKeypadInput
@@ -107,12 +126,14 @@ import com.example.ui.theme.Emerald500
 import com.example.ui.theme.Emerald950
 import com.example.ui.theme.Navy950
 import com.example.ui.theme.OnDark
+import com.example.ui.theme.PosNumericTextStyle
 import com.example.ui.theme.Rose400
 import com.example.ui.theme.Rose500
 import com.example.ui.theme.Rose950
 import com.example.ui.theme.Slate100
 import com.example.ui.theme.Slate400
 import com.example.ui.theme.Slate800
+import com.example.ui.theme.Slate850
 import com.example.ui.theme.Slate900
 import com.example.ui.theme.Slate950
 import kotlinx.coroutines.Dispatchers
@@ -146,7 +167,7 @@ fun CaisseScreen(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Caisse & Trésorerie", style = MaterialTheme.typography.titleLarge, color = OnDark, fontWeight = FontWeight.Black)
-                        Text("Solde Actuel : ${formatDa(solde)}", style = MaterialTheme.typography.titleMedium, color = Emerald500, fontWeight = FontWeight.Black)
+                        Text("Solde Actuel : ${formatDa(solde)}", style = PosNumericTextStyle.copy(fontSize = 18.sp), color = Emerald500)
                     }
                     Button(
                         onClick = { showPointageDialog = true },
@@ -367,8 +388,8 @@ fun CaisseScreen(
                     }
                     Button(
                         onClick = {
-                            val msg = "💰 *CLÔTURE CAISSE $activeStore*\nThéorique: ${formatDa(solde)}\nCompté: ${formatDa(compteReel)}\nÉcart: ${formatDa(ecart)}"
-                            openWhatsApp(context, PosSeeds.WHATSAPP_PATRON, msg)
+                            val msg = "💰 *CLÔTURE CAISSE $activeStore — CERAMICA*\nThéorique: ${formatDa(solde)}\nCompté: ${formatDa(compteReel)}\nÉcart: ${formatDa(ecart)}"
+                            openWhatsApp(context, PosSeeds.WHATSAPP_MANAGEMENT, msg)
                         },
                         modifier = Modifier.fillMaxWidth().height(48.dp),
                         shape = RoundedCornerShape(12.dp),
@@ -376,7 +397,7 @@ fun CaisseScreen(
                     ) {
                         Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Envoyer Bilan au Patron (WA)", fontWeight = FontWeight.Black)
+                        Text("Envoyer Bilan Direction (WA)", fontWeight = FontWeight.Black)
                     }
                 }
             }
@@ -388,55 +409,187 @@ fun CaisseScreen(
 fun UsersScreen(
     users: List<StaffUser>,
     currentUser: StaffUser?,
+    rolePolicies: List<RolePolicy> = PosSeeds.DEFAULT_ROLE_POLICIES,
+    effectivePermissions: EffectivePermissions = PosSeeds.resolveEffectivePermissions(currentUser, rolePolicies),
     onSaveUser: (StaffUser) -> Unit,
-    onDeleteUser: (String) -> Unit
+    onDeleteUser: (String) -> Unit,
+    onSaveRolePolicy: (RolePolicy) -> Unit = {}
 ) {
     var editingUser by remember { mutableStateOf<StaffUser?>(null) }
+    var editingPolicy by remember { mutableStateOf<RolePolicy?>(null) }
     var showCreate by remember { mutableStateOf(false) }
+
+    val orderedPolicies = remember(rolePolicies) {
+        val map = rolePolicies.associateBy { it.roleId }
+        PosSeeds.VALID_ROLES.map { rid -> map[rid] ?: PosSeeds.defaultPolicyForRole(rid) }
+    }
 
     Column(modifier = Modifier.fillMaxSize().background(Slate950)) {
         Surface(color = Navy950) {
-            Row(modifier = Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Gestion Équipe & Rôles", style = MaterialTheme.typography.titleLarge, color = OnDark, fontWeight = FontWeight.Black)
-                    Text("${users.size} comptes (Nom + PIN)", style = MaterialTheme.typography.bodySmall, color = Amber500, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Gestion Équipe & Rôles",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = OnDark,
+                        fontWeight = FontWeight.Black
+                    )
+                    Text(
+                        "${users.size} comptes • ${orderedPolicies.size} rôles Firestore (Admin / Manager / Seller)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Amber500,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
-                Button(
-                    onClick = { showCreate = true },
-                    modifier = Modifier.height(48.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Amber500, contentColor = OnDark)
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Profil", fontWeight = FontWeight.Black)
+                if (effectivePermissions.canManageUsers) {
+                    Button(
+                        onClick = { showCreate = true },
+                        modifier = Modifier.height(48.dp).testTag("users_add_profile_btn"),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Amber500, contentColor = OnDark)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Profil", fontWeight = FontWeight.Black)
+                    }
                 }
             }
         }
 
         LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            item {
+                Text(
+                    "Règles de Rôles Cloud (Firestore role_policies)",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = Amber400,
+                    fontWeight = FontWeight.Black,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                )
+            }
+            items(orderedPolicies, key = { "policy_${it.roleId}" }) { policy ->
+                val badgeColor = when (policy.roleId) {
+                    "admin" -> Amber400
+                    "gerant" -> Cyan400
+                    else -> Slate400
+                }
+                ElevatedCard(
+                    modifier = Modifier.testTag("role_policy_card_${policy.roleId}"),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.elevatedCardColors(containerColor = Slate900),
+                    elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = policy.displayName.ifBlank { policy.roleId.uppercase() },
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = badgeColor,
+                                    fontWeight = FontWeight.Black
+                                )
+                                if (policy.description.isNotBlank()) {
+                                    Text(
+                                        text = policy.description,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Slate400
+                                    )
+                                }
+                            }
+                            if (policy.roleId != "admin" && effectivePermissions.canManageUsers) {
+                                OutlinedButton(
+                                    onClick = { editingPolicy = policy },
+                                    modifier = Modifier.height(40.dp).testTag("edit_policy_btn_${policy.roleId}"),
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.5.dp, Cyan500)
+                                ) { Text("Règles", color = Cyan400, fontWeight = FontWeight.Black) }
+                            } else if (policy.roleId == "admin") {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Navy950,
+                                    border = BorderStroke(1.dp, Amber500.copy(alpha = 0.6f))
+                                ) {
+                                    Text(
+                                        text = "Complet",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Amber400,
+                                        fontWeight = FontWeight.Black,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            text = "Prix Achat: ${if (policy.canViewPrixAchat) "Visible" else "Masqué"} • Modif Tarifs: ${if (policy.canModifyPrices) "Autorisée" else "Verrouillée"} • Stock: ${if (policy.canModifyStock) "Modifiable" else "Lecture seule"} • Caisse: ${if (policy.canViewCaisse) "Oui" else "Non"}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Slate100,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+
+            item {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "Comptes Utilisateurs (${users.size})",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = Cyan400,
+                    fontWeight = FontWeight.Black,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                )
+            }
+
             items(users, key = { it.id }) { u ->
-                Surface(shape = RoundedCornerShape(16.dp), color = Slate900, border = BorderStroke(1.5.dp, Slate800)) {
+                val resolved = PosSeeds.resolveEffectivePermissions(u, orderedPolicies)
+                val roleLabel = when (u.role) {
+                    "admin" -> "Admin"
+                    "gerant" -> "Manager (Owner & Gérant)"
+                    else -> "Seller (Vendeur)"
+                }
+                ElevatedCard(
+                    modifier = Modifier.testTag("staff_card_${u.id}"),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.elevatedCardColors(containerColor = Slate900),
+                    elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
+                ) {
                     Row(modifier = Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             Text(u.name, style = MaterialTheme.typography.titleMedium, color = Slate100, fontWeight = FontWeight.Black)
-                            Text("${u.role.uppercase()} • ${u.magasin} • PIN: ${u.pin}", style = MaterialTheme.typography.bodySmall, color = Cyan400, fontWeight = FontWeight.Bold)
                             Text(
-                                text = "Stock: ${if (u.canModifyStock) "Modif" else "Lecture"} • Factures: ${if (u.canEditInvoices) "Éditable" else "Lecture"}",
+                                text = "$roleLabel • ${u.magasin} • PIN: ${u.pin}" + if (u.phone.isNotBlank()) " • Tél: ${u.phone}" else "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Cyan400,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Stock: ${if (resolved.canModifyStock) "Modif" else "Lecture"} • Prix Achat: ${if (resolved.canViewPrixAchat) "Visible" else "Masqué"} • Tarifs: ${if (resolved.canModifyPrices) "Libre" else "Verrouillés"}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Slate400
                             )
                         }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            OutlinedButton(
-                                onClick = { editingUser = u },
-                                modifier = Modifier.height(44.dp),
-                                shape = RoundedCornerShape(10.dp),
-                                border = BorderStroke(1.5.dp, Amber500)
-                            ) { Text("Éditer", color = Amber400, fontWeight = FontWeight.Black) }
-                            if (u.id != currentUser?.id && u.id != "u_kader") {
-                                IconButton(onClick = { onDeleteUser(u.id) }, modifier = Modifier.minimumInteractiveComponentSize()) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Supprimer", tint = Rose500)
+                        if (effectivePermissions.canManageUsers) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedButton(
+                                    onClick = { editingUser = u },
+                                    modifier = Modifier.height(44.dp).testTag("edit_user_btn_${u.id}"),
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.5.dp, Amber500)
+                                ) { Text("Éditer", color = Amber400, fontWeight = FontWeight.Black) }
+                                if (u.id != currentUser?.id && u.id != "u_kader") {
+                                    IconButton(onClick = { onDeleteUser(u.id) }, modifier = Modifier.minimumInteractiveComponentSize()) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Supprimer", tint = Rose500)
+                                    }
                                 }
                             }
                         }
@@ -446,17 +599,126 @@ fun UsersScreen(
         }
     }
 
+    editingPolicy?.let { pol ->
+        BackHandler { editingPolicy = null }
+        var pViewCost by remember(pol) { mutableStateOf(pol.canViewPrixAchat) }
+        var pModifyPrices by remember(pol) { mutableStateOf(pol.canModifyPrices) }
+        var pModifyStock by remember(pol) { mutableStateOf(pol.canModifyStock) }
+        var pEditInvoices by remember(pol) { mutableStateOf(pol.canEditInvoices) }
+        var pDeleteInvoices by remember(pol) { mutableStateOf(pol.canDeleteInvoices) }
+        var pViewCaisse by remember(pol) { mutableStateOf(pol.canViewCaisse) }
+        var pViewSuppliers by remember(pol) { mutableStateOf(pol.canViewSuppliers) }
+
+        Dialog(onDismissRequest = { editingPolicy = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().widthIn(max = 520.dp).padding(14.dp),
+                shape = RoundedCornerShape(22.dp),
+                color = Slate900,
+                border = BorderStroke(2.dp, Navy950)
+            ) {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Surface(shape = RoundedCornerShape(14.dp), color = Navy950) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Règles : ${pol.displayName}",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Amber500,
+                                fontWeight = FontWeight.Black,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Button(
+                                onClick = { editingPolicy = null },
+                                modifier = Modifier.height(42.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Rose500, contentColor = OnDark)
+                            ) { Text("FERMER", fontWeight = FontWeight.Black) }
+                        }
+                    }
+
+                    Surface(shape = RoundedCornerShape(12.dp), color = Slate950, border = BorderStroke(1.dp, Slate800)) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text("Voir Prix d'Achat & Marges", style = MaterialTheme.typography.bodySmall, color = Slate100)
+                                Switch(checked = pViewCost, onCheckedChange = { pViewCost = it })
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text("Modifier Prix / m² & Remises", style = MaterialTheme.typography.bodySmall, color = Slate100)
+                                Switch(checked = pModifyPrices, onCheckedChange = { pModifyPrices = it })
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text("Modifier Stock & Catalogue", style = MaterialTheme.typography.bodySmall, color = Slate100)
+                                Switch(checked = pModifyStock, onCheckedChange = { pModifyStock = it })
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text("Modifier Factures (alerte)", style = MaterialTheme.typography.bodySmall, color = Slate100)
+                                Switch(checked = pEditInvoices, onCheckedChange = { pEditInvoices = it })
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text("Supprimer Factures", style = MaterialTheme.typography.bodySmall, color = Slate100)
+                                Switch(checked = pDeleteInvoices, onCheckedChange = { pDeleteInvoices = it })
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text("Accès Caisse & Stats", style = MaterialTheme.typography.bodySmall, color = Slate100)
+                                Switch(checked = pViewCaisse, onCheckedChange = { pViewCaisse = it })
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text("Accès Usines & Fournisseurs", style = MaterialTheme.typography.bodySmall, color = Slate100)
+                                Switch(checked = pViewSuppliers, onCheckedChange = { pViewSuppliers = it })
+                            }
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            val nextTabs = buildList {
+                                addAll(listOf("pos", "stock", "invoices", "customers", "calculator"))
+                                if (pViewCaisse || pViewCost) add("dashboard")
+                                if (pViewSuppliers) add("suppliers")
+                                if (pViewCaisse) add("caisse")
+                                if (pModifyStock || pol.roleId == "gerant") add("settings")
+                            }.distinct()
+                            onSaveRolePolicy(
+                                pol.copy(
+                                    canViewPrixAchat = pViewCost,
+                                    canModifyPrices = pModifyPrices,
+                                    canModifyStock = pModifyStock,
+                                    canEditInvoices = pEditInvoices,
+                                    canDeleteInvoices = pDeleteInvoices,
+                                    canViewSuppliers = pViewSuppliers,
+                                    canViewCaisse = pViewCaisse,
+                                    allowedTabs = nextTabs
+                                )
+                            )
+                            editingPolicy = null
+                        },
+                        modifier = Modifier.fillMaxWidth().height(50.dp).testTag("save_role_policy_btn"),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Emerald500, contentColor = OnDark)
+                    ) { Text("Enregistrer Règles Firestore", fontWeight = FontWeight.Black) }
+                }
+            }
+        }
+    }
+
     if (showCreate || editingUser != null) {
         BackHandler { showCreate = false; editingUser = null }
         val init = editingUser
-        var name by remember { mutableStateOf(init?.name ?: "") }
-        var pinStr by remember { mutableStateOf(init?.pin ?: "0000") }
-        var role by remember { mutableStateOf(init?.role ?: "vendeur") }
-        var magasin by remember { mutableStateOf(init?.magasin ?: "Depot Remchi") }
-        var canEditInvoices by remember { mutableStateOf(init?.canEditInvoices ?: true) }
-        var canModifyStock by remember { mutableStateOf(init?.canModifyStock ?: (role != "vendeur")) }
-        var canViewCaisse by remember { mutableStateOf(init?.canViewCaisse ?: (role != "vendeur")) }
-        var canDeleteInvoices by remember { mutableStateOf(init?.canDeleteInvoices ?: (role == "admin")) }
+        var name by remember(init) { mutableStateOf(init?.name ?: "") }
+        var phone by remember(init) { mutableStateOf(init?.phone ?: "") }
+        var pinStr by remember(init) { mutableStateOf(init?.pin ?: "0000") }
+        var role by remember(init) { mutableStateOf(init?.role ?: "vendeur") }
+        var magasin by remember(init) { mutableStateOf(init?.magasin ?: "Depot Remchi") }
+        val defaultPolicy = orderedPolicies.find { it.roleId == role } ?: PosSeeds.defaultPolicyForRole(role)
+        var canViewPrixAchat by remember(init) { mutableStateOf(init?.canViewPrixAchat ?: defaultPolicy.canViewPrixAchat) }
+        var canModifyPrices by remember(init) { mutableStateOf(init?.canModifyPrices ?: defaultPolicy.canModifyPrices) }
+        var canEditInvoices by remember(init) { mutableStateOf(init?.canEditInvoices ?: defaultPolicy.canEditInvoices) }
+        var canModifyStock by remember(init) { mutableStateOf(init?.canModifyStock ?: defaultPolicy.canModifyStock) }
+        var canViewCaisse by remember(init) { mutableStateOf(init?.canViewCaisse ?: defaultPolicy.canViewCaisse) }
+        var canDeleteInvoices by remember(init) { mutableStateOf(init?.canDeleteInvoices ?: defaultPolicy.canDeleteInvoices) }
         var showKeypad by remember { mutableStateOf(false) }
         var isPristine by remember { mutableStateOf(true) }
 
@@ -491,6 +753,13 @@ fun UsersScreen(
                         onDismissKeypad = { showKeypad = false },
                         modifier = Modifier.fillMaxWidth()
                     )
+                    ClearableOutlinedTextField(
+                        value = phone,
+                        onValueChange = { phone = it },
+                        label = { Text("Numéro WhatsApp / Tél (ex: 0676...)") },
+                        onDismissKeypad = { showKeypad = false },
+                        modifier = Modifier.fillMaxWidth().testTag("user_phone_input")
+                    )
                     NumericDisplayField(
                         label = "Code PIN (4 chiffres)",
                         value = pinStr,
@@ -499,21 +768,22 @@ fun UsersScreen(
                         onClear = { pinStr = ""; isPristine = false },
                         accentColor = Amber500
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("admin", "gerant", "vendeur").forEach { r ->
+                    Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("admin" to "Admin", "gerant" to "Manager (Gérant)", "vendeur" to "Seller (Vendeur)").forEach { (r, label) ->
                             FilterChip(
                                 selected = role == r,
                                 onClick = {
                                     role = r
                                     showKeypad = false
-                                    val isAdm = r == "admin"
-                                    val isGer = r == "gerant" || isAdm
-                                    canEditInvoices = true
-                                    canModifyStock = isGer
-                                    canViewCaisse = isGer
-                                    canDeleteInvoices = isAdm
+                                    val pol = orderedPolicies.find { it.roleId == r } ?: PosSeeds.defaultPolicyForRole(r)
+                                    canViewPrixAchat = pol.canViewPrixAchat
+                                    canModifyPrices = pol.canModifyPrices
+                                    canEditInvoices = pol.canEditInvoices
+                                    canModifyStock = pol.canModifyStock
+                                    canViewCaisse = pol.canViewCaisse
+                                    canDeleteInvoices = pol.canDeleteInvoices
                                 },
-                                label = { Text(r, fontWeight = FontWeight.Bold) },
+                                label = { Text(label, fontWeight = FontWeight.Bold) },
                                 colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Navy950, selectedLabelColor = OnDark)
                             )
                         }
@@ -532,21 +802,47 @@ fun UsersScreen(
                     Surface(shape = RoundedCornerShape(12.dp), color = Slate950, border = BorderStroke(1.dp, Slate800)) {
                         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Text("Peut modifier factures (alerte patron)", style = MaterialTheme.typography.bodySmall, color = Slate100)
-                                Switch(checked = canEditInvoices, onCheckedChange = { canEditInvoices = it })
+                                Text("Peut voir prix d'achat & marges", style = MaterialTheme.typography.bodySmall, color = Slate100)
+                                Switch(
+                                    checked = canViewPrixAchat,
+                                    onCheckedChange = { canViewPrixAchat = it },
+                                    enabled = role != "admin"
+                                )
                             }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Text("Peut modifier stock & prix", style = MaterialTheme.typography.bodySmall, color = Slate100)
-                                Switch(checked = canModifyStock, onCheckedChange = { canModifyStock = it })
+                                Text("Peut modifier prix vente & remises", style = MaterialTheme.typography.bodySmall, color = Slate100)
+                                Switch(
+                                    checked = canModifyPrices,
+                                    onCheckedChange = { canModifyPrices = it },
+                                    enabled = role != "admin"
+                                )
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text("Peut modifier stock & articles", style = MaterialTheme.typography.bodySmall, color = Slate100)
+                                Switch(
+                                    checked = canModifyStock,
+                                    onCheckedChange = { canModifyStock = it },
+                                    enabled = role != "admin"
+                                )
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text("Peut modifier factures (alerte direction)", style = MaterialTheme.typography.bodySmall, color = Slate100)
+                                Switch(checked = canEditInvoices, onCheckedChange = { canEditInvoices = it }, enabled = role != "admin")
                             }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Text("Accès Caisse & Fournisseurs", style = MaterialTheme.typography.bodySmall, color = Slate100)
-                                Switch(checked = canViewCaisse, onCheckedChange = { canViewCaisse = it })
+                                Switch(checked = canViewCaisse, onCheckedChange = { canViewCaisse = it }, enabled = role != "admin")
                             }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Text("Peut supprimer factures", style = MaterialTheme.typography.bodySmall, color = Slate100)
-                                Switch(checked = canDeleteInvoices, onCheckedChange = { canDeleteInvoices = it })
+                                Switch(checked = canDeleteInvoices, onCheckedChange = { canDeleteInvoices = it }, enabled = role != "admin")
                             }
+                            Text(
+                                text = "Les permissions effectives sont l'intersection entre ce profil et la politique Firestore du rôle.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Amber400,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     }
 
@@ -562,7 +858,7 @@ fun UsersScreen(
                         onClick = {
                             if (name.isNotBlank() && pinStr.length == 4) {
                                 val isAdmin = role == "admin"
-                                val tabs = mutableListOf("pos", "stock", "invoices", "customers")
+                                val tabs = mutableListOf("pos", "stock", "invoices", "customers", "calculator")
                                 if (canViewCaisse || role == "gerant" || isAdmin) {
                                     tabs.addAll(listOf("dashboard", "suppliers", "caisse", "settings"))
                                 }
@@ -575,20 +871,23 @@ fun UsersScreen(
                                         pin = pinStr,
                                         magasin = magasin,
                                         allowedTabs = tabs.distinct(),
-                                        canEditInvoices = canEditInvoices,
-                                        canDeleteInvoices = canDeleteInvoices,
-                                        canModifyStock = canModifyStock,
-                                        canViewSuppliers = canViewCaisse,
-                                        canViewCaisse = canViewCaisse,
+                                        canEditInvoices = if (isAdmin) true else canEditInvoices,
+                                        canDeleteInvoices = if (isAdmin) true else canDeleteInvoices,
+                                        canModifyStock = if (isAdmin) true else canModifyStock,
+                                        canViewSuppliers = if (isAdmin) true else canViewCaisse,
+                                        canViewCaisse = if (isAdmin) true else canViewCaisse,
                                         canManageUsers = isAdmin,
-                                        active = true
+                                        active = true,
+                                        phone = phone.trim(),
+                                        canViewPrixAchat = if (isAdmin) true else canViewPrixAchat,
+                                        canModifyPrices = if (isAdmin) true else canModifyPrices
                                     )
                                 )
                                 showCreate = false; editingUser = null
                             }
                         },
                         enabled = name.isNotBlank() && pinStr.length == 4,
-                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        modifier = Modifier.fillMaxWidth().height(52.dp).testTag("save_user_profile_btn"),
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Emerald500, contentColor = OnDark)
                     ) { Text("Enregistrer Profil", fontWeight = FontWeight.Black) }
@@ -608,6 +907,12 @@ fun SettingsScreen(
     cloudSyncError: String?,
     onSignInGoogle: suspend () -> String?,
     onSignOutGoogle: () -> Unit,
+    isNetworkAvailable: Boolean = true,
+    pendingCloudWrites: Int = 0,
+    onRetryCloudSync: () -> Unit = {},
+    depotWatchEnabled: Boolean = true,
+    onToggleDepotWatch: (Boolean) -> Unit = {},
+    onSendTestNotification: () -> Unit = {},
     onSaveStoreInfo: (StoreInfo) -> Unit,
     onSaveSettings: (AppSettings) -> Unit,
     onSetAutoEmailPdf: (Boolean) -> Unit,
@@ -617,16 +922,43 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    var pendingTestAfterGrant by remember { mutableStateOf(false) }
+    val notifPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            onToggleDepotWatch(true)
+            if (pendingTestAfterGrant) {
+                onSendTestNotification()
+            }
+        }
+        pendingTestAfterGrant = false
+    }
     var nom by remember(storeInfo) { mutableStateOf(storeInfo.nom) }
     var adresse by remember(storeInfo) { mutableStateOf(storeInfo.adresse) }
     var tel by remember(storeInfo) { mutableStateOf(storeInfo.tel) }
     var tel2 by remember(storeInfo) { mutableStateOf(storeInfo.tel2) }
     var emailBureau by remember(storeInfo) { mutableStateOf(storeInfo.email) }
+    var deviceSellerName by remember(settings) { mutableStateOf(settings.deviceSellerName) }
+    var deviceSellerPhone by remember(settings) { mutableStateOf(settings.deviceSellerPhone) }
+    var invoiceRecipients by remember(storeInfo) { mutableStateOf(storeInfo.invoiceWaRecipients) }
+    var dispoRecipients by remember(storeInfo) { mutableStateOf(storeInfo.dispoWaRecipients) }
+    var logoVersion by remember { mutableIntStateOf(0) }
+    val logoBitmap = remember(logoVersion) { InvoicePdfGenerator.loadStoreLogoBitmap(context) }
+
     var pendingExportJson by remember { mutableStateOf<String?>(null) }
     var isSharingApk by remember { mutableStateOf(false) }
     var shareApkError by remember { mutableStateOf<String?>(null) }
     var isConnectingCloud by remember { mutableStateOf(false) }
     var cloudSignInError by remember { mutableStateOf<String?>(null) }
+
+    val logoPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null && InvoicePdfGenerator.saveStoreLogoFromUri(context, uri)) {
+            logoVersion++
+        }
+    }
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         val json = pendingExportJson
@@ -649,16 +981,160 @@ fun SettingsScreen(
     ) {
         Surface(color = Navy950) {
             Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
-                Text("Paramètres Magasin & Bureau", style = MaterialTheme.typography.titleLarge, color = OnDark, fontWeight = FontWeight.Black)
-                Text("Configuration cloud, impression PDF et alertes patron", style = MaterialTheme.typography.bodySmall, color = Amber500, fontWeight = FontWeight.Bold)
+                Text("Paramètres CERAMICA", style = MaterialTheme.typography.titleLarge, color = OnDark, fontWeight = FontWeight.Black)
+                Text("Cloud temps réel, logo facture, vendeur de l'appareil et WhatsApp", style = MaterialTheme.typography.bodySmall, color = Amber500, fontWeight = FontWeight.Bold)
             }
         }
 
         Column(modifier = Modifier.padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            // Automatic Bureau Email PDF & WhatsApp Settings
-            Surface(shape = RoundedCornerShape(16.dp), color = Slate900, border = BorderStroke(1.5.dp, Amber500)) {
+            // Logo Magasin sur Facture (Photo Picker zero-permission)
+            ElevatedCard(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = Slate900),
+                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
+            ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Envoi Automatique Bureau (Gmail PDF & WhatsApp)", style = MaterialTheme.typography.titleMedium, color = Amber400, fontWeight = FontWeight.Black)
+                    Text("Logo sur Facture & Bon de Livraison", style = MaterialTheme.typography.titleMedium, color = Navy950, fontWeight = FontWeight.Black)
+                    if (logoBitmap != null) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Image(
+                                bitmap = logoBitmap.asImageBitmap(),
+                                contentDescription = "Logo magasin",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .size(72.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Slate850)
+                                    .padding(4.dp)
+                            )
+                            Text(
+                                "Logo enregistré — imprimé automatiquement en mode éco-encre.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Emerald400,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    } else {
+                        Text(
+                            "Aucun logo personnalisé. Importez votre logo pour l'afficher en haut des factures.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Slate400
+                        )
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                logoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            modifier = Modifier.weight(1.3f).height(48.dp).testTag("settings_pick_logo_btn"),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Cyan500, contentColor = OnDark)
+                        ) {
+                            Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(if (logoBitmap != null) "Changer Logo" else "Choisir Logo", fontWeight = FontWeight.Black)
+                        }
+                        if (logoBitmap != null) {
+                            OutlinedButton(
+                                onClick = {
+                                    InvoicePdfGenerator.deleteStoreLogo(context)
+                                    logoVersion++
+                                },
+                                modifier = Modifier.weight(1f).height(48.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.5.dp, Rose500)
+                            ) {
+                                Text("Supprimer", color = Rose400, fontWeight = FontWeight.Black)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Vendeur configuré sur ce téléphone
+            ElevatedCard(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = Slate900),
+                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Vendeur de cet Appareil (Factures)", style = MaterialTheme.typography.titleMedium, color = Cyan400, fontWeight = FontWeight.Black)
+                    Text(
+                        "Ce nom et numéro s'impriment automatiquement comme contact vendeur sur chaque facture créée depuis ce téléphone.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Slate400
+                    )
+                    ClearableOutlinedTextField(
+                        value = deviceSellerName,
+                        onValueChange = { deviceSellerName = it },
+                        label = { Text("Nom du Vendeur sur ce téléphone") },
+                        modifier = Modifier.fillMaxWidth().testTag("settings_seller_name_input")
+                    )
+                    ClearableOutlinedTextField(
+                        value = deviceSellerPhone,
+                        onValueChange = { deviceSellerPhone = it },
+                        label = { Text("Tél Vendeur (sur facture)") },
+                        modifier = Modifier.fillMaxWidth().testTag("settings_seller_phone_input")
+                    )
+                    Button(
+                        onClick = {
+                            onSaveSettings(
+                                settings.copy(
+                                    deviceSellerName = deviceSellerName.trim(),
+                                    deviceSellerPhone = deviceSellerPhone.trim()
+                                )
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth().height(48.dp).testTag("settings_save_seller_btn"),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Emerald500, contentColor = OnDark)
+                    ) {
+                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Enregistrer Vendeur Appareil", fontWeight = FontWeight.Black)
+                    }
+                }
+            }
+
+            // Destinataires WhatsApp Factures (Obligatoire avant impression) & Dispo Dépôt
+            WaRecipientsEditorCard(
+                title = "Destinataires Factures WhatsApp (Kader, Walid...)",
+                subtitle = "Chaque facture générée en photo doit être envoyée sur WhatsApp avant impression.",
+                recipients = invoiceRecipients,
+                onUpdateRecipients = { invoiceRecipients = it },
+                onSaveAll = {
+                    onSaveStoreInfo(storeInfo.copy(invoiceWaRecipients = invoiceRecipients, dispoWaRecipients = dispoRecipients))
+                },
+                accentColor = Amber500,
+                testTagPrefix = "wa_invoice"
+            )
+
+            WaRecipientsEditorCard(
+                title = "Destinataires Dispo Dépôt (Kader, Walid, Toufik, Amine...)",
+                subtitle = "Contacts disponibles lorsque le vendeur vérifie la disponibilité d'un modèle.",
+                recipients = dispoRecipients,
+                onUpdateRecipients = { dispoRecipients = it },
+                onSaveAll = {
+                    onSaveStoreInfo(storeInfo.copy(invoiceWaRecipients = invoiceRecipients, dispoWaRecipients = dispoRecipients))
+                },
+                accentColor = Cyan500,
+                testTagPrefix = "wa_dispo"
+            )
+
+            // Automatic Bureau Email PDF & WhatsApp Settings
+            ElevatedCard(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = Slate900),
+                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Envoi Bureau & Numéros Principaux", style = MaterialTheme.typography.titleMedium, color = Amber400, fontWeight = FontWeight.Black)
                     ClearableOutlinedTextField(
                         value = emailBureau,
                         onValueChange = { emailBureau = it },
@@ -668,7 +1144,7 @@ fun SettingsScreen(
                     ClearableOutlinedTextField(
                         value = tel,
                         onValueChange = { tel = it },
-                        label = { Text("WhatsApp Patron") },
+                        label = { Text("WhatsApp Direction Principale (Kader)") },
                         modifier = Modifier.fillMaxWidth()
                     )
                     ClearableOutlinedTextField(
@@ -696,7 +1172,9 @@ fun SettingsScreen(
                                     adresse = adresse.trim().ifBlank { storeInfo.adresse },
                                     tel = tel.trim(),
                                     tel2 = tel2.trim(),
-                                    email = emailBureau.trim()
+                                    email = emailBureau.trim(),
+                                    invoiceWaRecipients = invoiceRecipients,
+                                    dispoWaRecipients = dispoRecipients
                                 )
                             )
                         },
@@ -711,20 +1189,37 @@ fun SettingsScreen(
                 }
             }
 
-            Surface(shape = RoundedCornerShape(16.dp), color = Slate900, border = BorderStroke(1.5.dp, if (firebaseUserEmail == null) Amber500 else Slate800)) {
+            val showCloudHealthy = firebaseUserEmail != null && isNetworkAvailable && isCloudSynced
+            val showCloudOffline = firebaseUserEmail == null || !isNetworkAvailable
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Slate900,
+                border = BorderStroke(
+                    1.5.dp,
+                    when {
+                        showCloudHealthy -> Emerald500.copy(alpha = 0.65f)
+                        showCloudOffline -> Amber500
+                        else -> Slate800
+                    }
+                )
+            ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = if (firebaseUserEmail == null) Icons.Default.CloudOff else Icons.Default.CloudDone,
+                            imageVector = if (showCloudOffline) Icons.Default.CloudOff else Icons.Default.CloudDone,
                             contentDescription = null,
-                            tint = if (firebaseUserEmail == null) Amber400 else Emerald400,
+                            tint = if (showCloudHealthy) Emerald400 else Amber400,
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (firebaseUserEmail == null) "Mode Hors-Ligne Local" else "Base Cloud Partagée Temps Réel",
+                            text = when {
+                                firebaseUserEmail == null -> "Mode Hors-Ligne Local"
+                                !isNetworkAvailable -> "Cloud en Attente (Hors-Ligne)"
+                                else -> "Base Cloud Partagée Temps Réel"
+                            },
                             style = MaterialTheme.typography.titleMedium,
-                            color = if (firebaseUserEmail == null) Amber400 else Cyan400,
+                            color = if (showCloudHealthy) Cyan400 else Amber400,
                             fontWeight = FontWeight.Black
                         )
                     }
@@ -735,6 +1230,14 @@ fun SettingsScreen(
                             color = Slate100,
                             fontWeight = FontWeight.SemiBold
                         )
+                        if (!isNetworkAvailable) {
+                            Text(
+                                text = "Pas de connexion Internet détectée actuellement.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Amber400,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                         if (cloudSignInError != null) {
                             Text(
                                 text = cloudSignInError ?: "",
@@ -779,19 +1282,49 @@ fun SettingsScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
+                            text = if (isNetworkAvailable) {
+                                "Réseau Internet actif"
+                            } else {
+                                "Pas de connexion Internet — modifications en file locale"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (isNetworkAvailable) Emerald400 else Amber400,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
                             text = when {
+                                !isNetworkAvailable -> "Reconnexion et envoi automatique dès le retour d'internet."
                                 cloudSyncError != null -> "Synchronisation : $cloudSyncError"
                                 isCloudSynced -> "Cloud Firestore synchronisé en temps réel (multi-villes actif)"
                                 else -> "Connexion au Cloud Firestore..."
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = when {
-                                cloudSyncError != null -> Amber400
+                                !isNetworkAvailable || cloudSyncError != null -> Amber400
                                 isCloudSynced -> Emerald400
                                 else -> Slate400
                             },
                             fontWeight = FontWeight.SemiBold
                         )
+                        if (pendingCloudWrites > 0) {
+                            Text(
+                                text = "$pendingCloudWrites écriture(s) Cloud en cours / file d'attente...",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Amber400,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Button(
+                            onClick = onRetryCloudSync,
+                            enabled = isNetworkAvailable,
+                            modifier = Modifier.fillMaxWidth().height(48.dp).testTag("settings_cloud_sync_btn"),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Cyan500, contentColor = OnDark)
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Synchroniser Cloud maintenant", fontWeight = FontWeight.Black)
+                        }
                         OutlinedButton(
                             onClick = onSignOutGoogle,
                             modifier = Modifier.fillMaxWidth().height(48.dp).testTag("google_sign_out_btn"),
@@ -801,6 +1334,55 @@ fun SettingsScreen(
                             Icon(Icons.Default.Lock, contentDescription = null, tint = Rose400, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Déconnecter le compte Google", color = Rose400, fontWeight = FontWeight.Black)
+                        }
+                        HorizontalDivider(color = Slate800)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Alertes Ventes Hors-App (Dépôt)",
+                                    color = Slate100,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Black
+                                )
+                                Text(
+                                    "Notifie l'Admin dans la barre Android dès qu'un vendeur valide une vente même si l'application est fermée ou en arrière-plan.",
+                                    color = Slate400,
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                            Switch(
+                                checked = depotWatchEnabled,
+                                onCheckedChange = { checked ->
+                                    if (checked && Build.VERSION.SDK_INT >= 33 && !SaleSystemNotifier.hasNotificationPermission(context)) {
+                                        pendingTestAfterGrant = false
+                                        notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    } else {
+                                        onToggleDepotWatch(checked)
+                                    }
+                                },
+                                modifier = Modifier.testTag("settings_depot_watch_switch")
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                if (Build.VERSION.SDK_INT >= 33 && !SaleSystemNotifier.hasNotificationPermission(context)) {
+                                    pendingTestAfterGrant = true
+                                    notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                } else {
+                                    onSendTestNotification()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().height(48.dp).testTag("test_out_of_app_notif_btn"),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.5.dp, Emerald500)
+                        ) {
+                            Icon(Icons.Default.Notifications, contentDescription = null, tint = Emerald400, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Tester Notification Hors-App", color = Emerald400, fontWeight = FontWeight.Black)
                         }
                     }
                 }
@@ -865,7 +1447,7 @@ fun SettingsScreen(
                             onClick = {
                                 onExportJson { json ->
                                     pendingExportJson = json
-                                    exportLauncher.launch("KADER_CERAMIC_BACKUP.json")
+                                    exportLauncher.launch("CERAMICA_BACKUP.json")
                                 }
                             },
                             modifier = Modifier.weight(1f).height(48.dp),
@@ -904,7 +1486,7 @@ fun SettingsScreen(
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Partager l'application (.apk)", style = MaterialTheme.typography.titleMedium, color = Cyan400, fontWeight = FontWeight.Black)
                     Text(
-                        "Envoyez directement le fichier d'installation Kader_POS.apk vers un autre téléphone via WhatsApp, Telegram ou Bluetooth.",
+                        "Envoyez directement le fichier d'installation CERAMICA_POS.apk vers un autre téléphone via WhatsApp, Telegram ou Bluetooth.",
                         style = MaterialTheme.typography.bodySmall,
                         color = Slate400
                     )
@@ -930,7 +1512,7 @@ fun SettingsScreen(
                                             error("Impossible de lire le fichier APK installé.")
                                         }
                                         val shareDir = File(context.cacheDir, "shared_apks").apply { mkdirs() }
-                                        val targetApk = File(shareDir, "Kader_POS.apk")
+                                        val targetApk = File(shareDir, "CERAMICA_POS.apk")
                                         sourceApk.copyTo(targetApk, overwrite = true)
                                         targetApk
                                     }
@@ -942,14 +1524,14 @@ fun SettingsScreen(
                                     val sendIntent = Intent(Intent.ACTION_SEND).apply {
                                         type = "application/vnd.android.package-archive"
                                         putExtra(Intent.EXTRA_STREAM, uri)
-                                        putExtra(Intent.EXTRA_SUBJECT, "Kader POS (.apk)")
+                                        putExtra(Intent.EXTRA_SUBJECT, "CERAMICA POS (.apk)")
                                         putExtra(
                                             Intent.EXTRA_TEXT,
-                                            "Installez Kader POS sur votre téléphone Android en ouvrant le fichier Kader_POS.apk joint."
+                                            "Installez CERAMICA POS sur votre téléphone Android en ouvrant le fichier CERAMICA_POS.apk joint."
                                         )
                                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                     }
-                                    val chooserIntent = Intent.createChooser(sendIntent, "Partager Kader POS (.apk)").apply {
+                                    val chooserIntent = Intent.createChooser(sendIntent, "Partager CERAMICA POS (.apk)").apply {
                                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                     }
                                     context.startActivity(chooserIntent)
@@ -972,11 +1554,11 @@ fun SettingsScreen(
                                 color = OnDark
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Préparation de Kader_POS.apk...", fontWeight = FontWeight.Black)
+                            Text("Préparation de CERAMICA_POS.apk...", fontWeight = FontWeight.Black)
                         } else {
                             Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Partager Kader_POS.apk", fontWeight = FontWeight.Black)
+                            Text("Partager CERAMICA_POS.apk", fontWeight = FontWeight.Black)
                         }
                     }
                 }
@@ -986,11 +1568,124 @@ fun SettingsScreen(
     }
 }
 
+@Composable
+private fun WaRecipientsEditorCard(
+    title: String,
+    subtitle: String,
+    recipients: List<WaRecipient>,
+    onUpdateRecipients: (List<WaRecipient>) -> Unit,
+    onSaveAll: () -> Unit,
+    accentColor: androidx.compose.ui.graphics.Color,
+    testTagPrefix: String
+) {
+    var newName by remember { mutableStateOf("") }
+    var newPhone by remember { mutableStateOf("") }
+
+    ElevatedCard(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.elevatedCardColors(containerColor = Slate900),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, color = accentColor, fontWeight = FontWeight.Black)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Slate400)
+
+            recipients.forEachIndexed { idx, rec ->
+                Surface(shape = RoundedCornerShape(12.dp), color = Slate950, border = BorderStroke(1.dp, Slate800)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            ClearableOutlinedTextField(
+                                value = rec.name,
+                                onValueChange = { updatedName ->
+                                    val mutable = recipients.toMutableList()
+                                    mutable[idx] = rec.copy(name = updatedName)
+                                    onUpdateRecipients(mutable)
+                                },
+                                label = { Text("Nom / Rôle") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            ClearableOutlinedTextField(
+                                value = rec.phone,
+                                onValueChange = { updatedPhone ->
+                                    val mutable = recipients.toMutableList()
+                                    mutable[idx] = rec.copy(phone = updatedPhone)
+                                    onUpdateRecipients(mutable)
+                                },
+                                label = { Text("Numéro WhatsApp") },
+                                modifier = Modifier.fillMaxWidth().testTag("${testTagPrefix}_phone_$idx")
+                            )
+                        }
+                        if (recipients.size > 1) {
+                            IconButton(
+                                onClick = {
+                                    val mutable = recipients.toMutableList()
+                                    mutable.removeAt(idx)
+                                    onUpdateRecipients(mutable)
+                                },
+                                modifier = Modifier.minimumInteractiveComponentSize()
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = "Supprimer contact", tint = Rose500)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                ClearableOutlinedTextField(
+                    value = newName,
+                    onValueChange = { newName = it },
+                    label = { Text("Ajouter Nom") },
+                    modifier = Modifier.weight(1f)
+                )
+                ClearableOutlinedTextField(
+                    value = newPhone,
+                    onValueChange = { newPhone = it },
+                    label = { Text("Tél") },
+                    modifier = Modifier.weight(1f)
+                )
+                Button(
+                    onClick = {
+                        if (newName.isNotBlank()) {
+                            onUpdateRecipients(recipients + WaRecipient(newName.trim(), newPhone.trim()))
+                            newName = ""
+                            newPhone = ""
+                        }
+                    },
+                    enabled = newName.isNotBlank(),
+                    modifier = Modifier.height(50.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = accentColor, contentColor = OnDark),
+                    contentPadding = PaddingValues(horizontal = 12.dp)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Ajouter")
+                }
+            }
+
+            Button(
+                onClick = onSaveAll,
+                modifier = Modifier.fillMaxWidth().height(46.dp).testTag("${testTagPrefix}_save_btn"),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Emerald500, contentColor = OnDark)
+            ) {
+                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Enregistrer Contacts WhatsApp", fontWeight = FontWeight.Black)
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NotificationsSheet(
     notifications: List<DepotNotification>,
     storeInfo: StoreInfo,
+    onOpenInvoice: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     BackHandler { onDismiss() }
@@ -1010,11 +1705,13 @@ fun NotificationsSheet(
         }
     }
 
-    val waPatronDigits = remember(storeInfo.tel) {
-        toDzWhatsAppDigits(storeInfo.tel)?.takeIf { it.isNotBlank() } ?: PosSeeds.WHATSAPP_PATRON
+    val waManagementDigits = remember(storeInfo.tel, storeInfo.invoiceWaRecipients) {
+        val recPhone = storeInfo.invoiceWaRecipients.firstOrNull { it.phone.isNotBlank() }?.phone
+        toDzWhatsAppDigits(recPhone ?: storeInfo.tel)?.takeIf { it.isNotBlank() } ?: PosSeeds.WHATSAPP_MANAGEMENT
     }
-    val waDepotDigits = remember(storeInfo.tel2) {
-        toDzWhatsAppDigits(storeInfo.tel2)?.takeIf { it.isNotBlank() } ?: PosSeeds.WHATSAPP_DEPOT
+    val waDepotDigits = remember(storeInfo.tel2, storeInfo.dispoWaRecipients) {
+        val depPhone = storeInfo.dispoWaRecipients.lastOrNull { it.phone.isNotBlank() }?.phone
+        toDzWhatsAppDigits(depPhone ?: storeInfo.tel2)?.takeIf { it.isNotBlank() } ?: PosSeeds.WHATSAPP_DEPOT
     }
 
     ModalBottomSheet(
@@ -1030,7 +1727,11 @@ fun NotificationsSheet(
                 .testTag("notifications_sheet"),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Surface(shape = RoundedCornerShape(16.dp), color = Navy950) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Slate900,
+                border = BorderStroke(1.dp, Slate800)
+            ) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1040,8 +1741,8 @@ fun NotificationsSheet(
                         Icon(Icons.Default.Notifications, contentDescription = null, tint = Amber500, modifier = Modifier.size(24.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
-                            Text("Alertes Patron & Dépôt (${filtered.size})", style = MaterialTheme.typography.titleMedium, color = OnDark, fontWeight = FontWeight.Black)
-                            Text("Ventes • Modifs Factures • Stock • Dispo", style = MaterialTheme.typography.labelSmall, color = Amber500)
+                            Text("Alertes Direction & Dépôt (${filtered.size})", style = MaterialTheme.typography.titleMedium, color = Navy950, fontWeight = FontWeight.Black)
+                            Text("Ventes • Modifs Factures • Stock • Dispo", style = MaterialTheme.typography.labelSmall, color = Cyan400, fontWeight = FontWeight.Bold)
                         }
                     }
                     Button(
@@ -1068,7 +1769,7 @@ fun NotificationsSheet(
                         onClick = { categoryFilter = cat },
                         label = { Text(cat, fontWeight = FontWeight.Bold) },
                         colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Navy950,
+                            selectedContainerColor = Cyan500,
                             selectedLabelColor = OnDark,
                             containerColor = Slate900,
                             labelColor = Slate100
@@ -1106,6 +1807,11 @@ fun NotificationsSheet(
                             upperRef.contains("[DISPO]") -> "DISPO DÉPÔT"
                             else -> "VENTE"
                         }
+                        val hasOpenableInvoice = n.invoiceId.isNotBlank() &&
+                            !upperRef.contains("[DISPO]") &&
+                            !upperRef.contains("[STOCK]") &&
+                            !upperRef.contains("[ALERTE]") &&
+                            !upperRef.contains("[SUPPR]")
 
                         Surface(shape = RoundedCornerShape(14.dp), color = Slate900, border = BorderStroke(1.5.dp, badgeColor.copy(alpha = 0.6f))) {
                             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1128,11 +1834,26 @@ fun NotificationsSheet(
                                 }
                                 Text("#${n.reference} • ${n.client}", style = MaterialTheme.typography.titleSmall, color = Slate100, fontWeight = FontWeight.Black)
                                 Text(n.articlesSummary, style = MaterialTheme.typography.bodySmall, color = Slate400)
+                                if (hasOpenableInvoice) {
+                                    OutlinedButton(
+                                        onClick = { onOpenInvoice(n.invoiceId) },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(44.dp)
+                                            .testTag("notif_open_invoice_${n.invoiceId}"),
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = BorderStroke(1.5.dp, Cyan500)
+                                    ) {
+                                        Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = Cyan400, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Ouvrir la Facture & Photo", color = Cyan400, fontWeight = FontWeight.Black)
+                                    }
+                                }
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Button(
                                         onClick = {
-                                            val msg = "🔔 *ALERTE PATRON #${n.reference}*\nClient/Auteur: ${n.client}\n${n.articlesSummary}"
-                                            openWhatsApp(context, waPatronDigits, msg)
+                                            val msg = "🔔 *ALERTE DIRECTION #${n.reference}*\nClient/Auteur: ${n.client}\n${n.articlesSummary}"
+                                            openWhatsApp(context, waManagementDigits, msg)
                                         },
                                         modifier = Modifier.weight(1f).height(42.dp),
                                         shape = RoundedCornerShape(10.dp),
@@ -1141,7 +1862,7 @@ fun NotificationsSheet(
                                     ) {
                                         Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(15.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("WA Patron", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Black)
+                                        Text("WA Direction", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Black)
                                     }
                                     Button(
                                         onClick = {
@@ -1164,7 +1885,7 @@ fun NotificationsSheet(
                                                 if (storeInfo.email.isNotBlank()) {
                                                     putExtra(Intent.EXTRA_EMAIL, arrayOf(storeInfo.email.trim()))
                                                 }
-                                                putExtra(Intent.EXTRA_SUBJECT, "Alerte Kader POS #${n.reference}")
+                                                putExtra(Intent.EXTRA_SUBJECT, "Alerte CERAMICA POS #${n.reference}")
                                                 putExtra(Intent.EXTRA_TEXT, "Alerte: ${n.reference}\nClient/Auteur: ${n.client}\n${n.articlesSummary}\nDate: ${n.date}")
                                             }
                                             val gmailIntent = Intent(emailIntent).apply { setPackage("com.google.android.gm") }

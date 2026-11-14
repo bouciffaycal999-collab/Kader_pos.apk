@@ -33,6 +33,8 @@
         "choix": { "type": "string" },
         "categorie": { "type": "string" },
         "description": { "type": "string" },
+        "pricingUnit": { "type": "string", "enum": ["carton", "piece"] },
+        "prixPiece": { "type": "number" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" },
         "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" }
       },
@@ -58,6 +60,9 @@
         "modePaiement": { "type": "string" },
         "statut": { "type": "string", "enum": ["Payé", "Partiel", "Crédit"] },
         "notes": { "type": "string" },
+        "vendeurTel": { "type": "string" },
+        "hidePrices": { "type": "boolean" },
+        "whatsappSentBeforePrint": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" },
         "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" }
       },
@@ -165,11 +170,36 @@
         "canViewSuppliers": { "type": "boolean" },
         "canViewCaisse": { "type": "boolean" },
         "canManageUsers": { "type": "boolean" },
+        "canViewPrixAchat": { "type": "boolean" },
+        "canModifyPrices": { "type": "boolean" },
         "active": { "type": "boolean" },
+        "phone": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" },
         "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" }
       },
       "required": ["name", "role", "pin", "magasin", "allowedTabs", "canEditInvoices", "canDeleteInvoices", "canModifyStock", "canViewSuppliers", "canViewCaisse", "canManageUsers", "active", "createdAt", "updatedAt"]
+    },
+    "RolePolicy": {
+      "title": "RolePolicy",
+      "description": "Role-based permission template for Admin, Manager (gerant), and Seller (vendeur)",
+      "type": "object",
+      "properties": {
+        "roleId": { "type": "string", "enum": ["admin", "gerant", "vendeur"] },
+        "displayName": { "type": "string" },
+        "description": { "type": "string" },
+        "canViewPrixAchat": { "type": "boolean" },
+        "canModifyPrices": { "type": "boolean" },
+        "canModifyStock": { "type": "boolean" },
+        "canEditInvoices": { "type": "boolean" },
+        "canDeleteInvoices": { "type": "boolean" },
+        "canViewSuppliers": { "type": "boolean" },
+        "canViewCaisse": { "type": "boolean" },
+        "canManageUsers": { "type": "boolean" },
+        "allowedTabs": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" }
+      },
+      "required": ["roleId", "displayName", "description", "canViewPrixAchat", "canModifyPrices", "canModifyStock", "canEditInvoices", "canDeleteInvoices", "canViewSuppliers", "canViewCaisse", "canManageUsers", "allowedTabs", "createdAt", "updatedAt"]
     },
     "DepotNotification": {
       "title": "DepotNotification",
@@ -209,6 +239,8 @@
         "nif": { "type": "string" },
         "nis": { "type": "string" },
         "ai": { "type": "string" },
+        "invoiceWaRecipients": { "type": "array" },
+        "dispoWaRecipients": { "type": "array" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" },
         "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" }
       },
@@ -226,6 +258,8 @@
         "touchFriendlyMode": { "type": "boolean" },
         "activeStore": { "type": "string" },
         "enableSoundAlerts": { "type": "boolean" },
+        "deviceSellerName": { "type": "string" },
+        "deviceSellerPhone": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" },
         "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" }
       },
@@ -268,6 +302,10 @@
     "/users/{userId}/staff_users/{staffId}": {
       "schema": { "$ref": "#/entities/StaffUser" },
       "description": "POS staff terminal profiles"
+    },
+    "/users/{userId}/role_policies/{roleId}": {
+      "schema": { "$ref": "#/entities/RolePolicy" },
+      "description": "Role permission definitions (admin, gerant, vendeur)"
     },
     "/users/{userId}/notifications/{notificationId}": {
       "schema": { "$ref": "#/entities/DepotNotification" },
