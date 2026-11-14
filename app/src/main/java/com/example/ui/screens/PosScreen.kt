@@ -170,10 +170,9 @@ fun PosScreen(
     onFinalizeSale: (InvoiceClient, Double, Double, String, String) -> Unit
 ) {
     var searchQuery by remember { mutableStateOf("") }
-    var selectedUsine by remember { mutableStateOf("Toutes") }
     var selectedDimension by remember { mutableStateOf("Toutes") }
-    var selectedChoix by remember { mutableStateOf("Tous") }
-    var onlyInStock by remember { mutableStateOf(false) }
+    var selectedUsine by remember { mutableStateOf("Toutes") }
+    var selectedFinition by remember { mutableStateOf("Toutes") }
     var isGridView by remember { mutableStateOf(true) }
 
     var showCartSheet by remember { mutableStateOf(false) }
@@ -185,27 +184,29 @@ fun PosScreen(
     var previewProduct by remember { mutableStateOf<TileProduct?>(null) }
     var dispoTargetProduct by remember { mutableStateOf<TileProduct?>(null) }
 
-    val hasActiveFilter = searchQuery.isNotBlank() || onlyInStock ||
-        selectedChoix != "Tous" || selectedUsine != "Toutes" || selectedDimension != "Toutes"
+    val hasActiveFilter = searchQuery.isNotBlank() ||
+        selectedDimension != "Toutes" || selectedUsine != "Toutes" || selectedFinition != "Toutes"
 
-    val inStockCount = remember(products) { products.count { it.stock > 0 } }
-    val usines = remember(products) {
-        listOf("Toutes") + products.map { it.usine }.distinct().sorted()
-    }
     val dimensions = remember(products) {
-        listOf("Toutes") + products.map { it.dimension }.distinct().sorted()
+        listOf("Toutes") + products.map { it.dimension.trim() }.filter { it.isNotBlank() }.distinct().sorted()
+    }
+    val usines = remember(products) {
+        listOf("Toutes") + products.map { it.usine.trim() }.filter { it.isNotBlank() }.distinct().sorted()
+    }
+    val finitions = remember(products) {
+        listOf("Toutes") + products.map { it.finition.trim() }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }.sortedBy { it.lowercase() }
     }
 
     val filteredProducts = remember(
-        products, searchQuery, selectedUsine, selectedDimension, selectedChoix, onlyInStock
+        products, searchQuery, selectedDimension, selectedUsine, selectedFinition
     ) {
         val q = searchQuery.trim().lowercase()
         products.filter { p ->
-            (q.isEmpty() || p.name.lowercase().contains(q) || p.usine.lowercase().contains(q) || p.dimension.lowercase().contains(q)) &&
-                (selectedUsine == "Toutes" || p.usine == selectedUsine) &&
-                (selectedDimension == "Toutes" || p.dimension == selectedDimension) &&
-                (selectedChoix == "Tous" || p.choix == selectedChoix) &&
-                (!onlyInStock || p.stock > 0)
+            (q.isEmpty() || p.name.lowercase().contains(q) || p.usine.lowercase().contains(q) ||
+                p.dimension.lowercase().contains(q) || p.finition.lowercase().contains(q)) &&
+                (selectedDimension == "Toutes" || p.dimension.trim() == selectedDimension) &&
+                (selectedUsine == "Toutes" || p.usine.trim() == selectedUsine) &&
+                (selectedFinition == "Toutes" || p.finition.trim().equals(selectedFinition, ignoreCase = true))
         }
     }
 
@@ -281,7 +282,7 @@ fun PosScreen(
                                     Text(
                                         text = "Catalogue Showroom",
                                         style = MaterialTheme.typography.titleSmall,
-                                        color = Navy950,
+                                        color = Slate100,
                                         fontWeight = FontWeight.Black
                                     )
                                     Surface(
@@ -306,10 +307,9 @@ fun PosScreen(
                                                 .clip(RoundedCornerShape(8.dp))
                                                 .clickable {
                                                     searchQuery = ""
-                                                    selectedUsine = "Toutes"
                                                     selectedDimension = "Toutes"
-                                                    selectedChoix = "Tous"
-                                                    onlyInStock = false
+                                                    selectedUsine = "Toutes"
+                                                    selectedFinition = "Toutes"
                                                 }
                                                 .testTag("pos_reset_filters_btn")
                                         ) {
@@ -423,69 +423,43 @@ fun PosScreen(
                                 }
                             }
 
-                            // Filters Row
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                FilterChip(
-                                    selected = onlyInStock,
-                                    onClick = { onlyInStock = !onlyInStock },
-                                    label = { Text("En stock ($inStockCount)", fontWeight = FontWeight.Bold) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = Emerald500,
-                                        selectedLabelColor = OnDark,
-                                        containerColor = Slate950,
-                                        labelColor = Slate400
-                                    )
-                                )
-                                listOf("Tous", "1er Choix", "2ème Choix").forEach { choix ->
-                                    FilterChip(
-                                        selected = selectedChoix == choix,
-                                        onClick = { selectedChoix = choix },
-                                        label = { Text(choix, fontWeight = FontWeight.Bold) },
-                                        colors = FilterChipDefaults.filterChipColors(
-                                            selectedContainerColor = Navy950,
-                                            selectedLabelColor = OnDark,
-                                            containerColor = Slate950,
-                                            labelColor = Slate400
-                                        )
-                                    )
+                            // 3 Lignes de Filtres Dynamiques : Dimension, Usine, Finition
+                            PosDynamicFilterStrip(
+                                title = "Format",
+                                options = dimensions,
+                                selected = selectedDimension,
+                                activeColor = Cyan500,
+                                accentTextColor = Cyan300,
+                                testTagPrefix = "pos_filter_dim",
+                                onSelect = { opt ->
+                                    selectedDimension = if (opt != "Toutes" && selectedDimension == opt) "Toutes" else opt
                                 }
-                                usines.forEach { u ->
-                                    if (u != "Toutes") {
-                                        FilterChip(
-                                            selected = selectedUsine == u,
-                                            onClick = { selectedUsine = if (selectedUsine == u) "Toutes" else u },
-                                            label = { Text(u, fontWeight = FontWeight.Bold) },
-                                            colors = FilterChipDefaults.filterChipColors(
-                                                selectedContainerColor = Amber500,
-                                                selectedLabelColor = OnDark,
-                                                containerColor = Slate950,
-                                                labelColor = Slate400
-                                            )
-                                        )
-                                    }
+                            )
+                            PosDynamicFilterStrip(
+                                title = "Usine",
+                                options = usines,
+                                selected = selectedUsine,
+                                activeColor = Amber500,
+                                accentTextColor = Amber300,
+                                testTagPrefix = "pos_filter_usine",
+                                onSelect = { opt ->
+                                    selectedUsine = if (opt != "Toutes" && selectedUsine == opt) "Toutes" else opt
                                 }
-                                dimensions.forEach { d ->
-                                    if (d != "Toutes") {
-                                        FilterChip(
-                                            selected = selectedDimension == d,
-                                            onClick = { selectedDimension = if (selectedDimension == d) "Toutes" else d },
-                                            label = { Text(d, fontWeight = FontWeight.Bold) },
-                                            colors = FilterChipDefaults.filterChipColors(
-                                                selectedContainerColor = Cyan500,
-                                                selectedLabelColor = OnDark,
-                                                containerColor = Slate950,
-                                                labelColor = Slate400
-                                            )
-                                        )
-                                    }
+                            )
+                            PosDynamicFilterStrip(
+                                title = "Finition",
+                                options = finitions,
+                                selected = selectedFinition,
+                                activeColor = Emerald500,
+                                accentTextColor = Emerald300,
+                                formatLabel = { f ->
+                                    if (f == "Toutes") f else f.replaceFirstChar { it.uppercase() }
+                                },
+                                testTagPrefix = "pos_filter_finition",
+                                onSelect = { opt ->
+                                    selectedFinition = if (opt != "Toutes" && selectedFinition.equals(opt, ignoreCase = true)) "Toutes" else opt
                                 }
-                            }
+                            )
                         }
                     }
 
@@ -595,7 +569,7 @@ fun PosScreen(
                                     Text(
                                         text = formatDa(totalBrut),
                                         style = PosNumericTextStyle.copy(fontSize = 19.sp),
-                                        color = Navy950
+                                        color = Emerald400
                                     )
                                 }
                             }
@@ -821,19 +795,6 @@ private fun ProductTileCard(
     onCheckDepotDispo: () -> Unit,
     onPreviewImage: () -> Unit
 ) {
-    val isLow = product.stock in 1..5
-    val isOut = product.stock <= 0
-    val stockBadgeBg = when {
-        isOut -> Rose950
-        isLow -> Amber950
-        else -> Emerald950
-    }
-    val stockBadgeFg = when {
-        isOut -> Rose400
-        isLow -> Amber300
-        else -> Emerald300
-    }
-
     ElevatedCard(
         onClick = onOpenCalculator,
         modifier = Modifier
@@ -880,34 +841,16 @@ private fun ProductTileCard(
                     }
                     Surface(
                         modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(6.dp),
-                        shape = RoundedCornerShape(8.dp),
-                        color = stockBadgeBg,
-                        border = BorderStroke(1.dp, stockBadgeFg.copy(alpha = 0.45f))
-                    ) {
-                        Text(
-                            text = if (isOut) "${product.stock} ctn • Libre" else "${product.stock} ctn",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = stockBadgeFg,
-                            fontWeight = FontWeight.Black,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
-                        )
-                    }
-                    Surface(
-                        modifier = Modifier
                             .align(Alignment.BottomStart)
                             .padding(6.dp),
                         shape = RoundedCornerShape(6.dp),
-                        color = Slate900.copy(alpha = 0.92f),
-                        border = BorderStroke(1.dp, Slate800)
+                        color = Slate950.copy(alpha = 0.92f),
+                        border = BorderStroke(1.dp, Cyan500.copy(alpha = 0.45f))
                     ) {
                         Text(
                             text = product.finition.replaceFirstChar { it.uppercase() },
                             style = MaterialTheme.typography.labelSmall,
-                            color = Navy950,
+                            color = Cyan300,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
@@ -1043,19 +986,6 @@ private fun ProductTileListRow(
     onCheckDepotDispo: () -> Unit,
     onPreviewImage: () -> Unit
 ) {
-    val isLow = product.stock in 1..5
-    val isOut = product.stock <= 0
-    val stockBg = when {
-        isOut -> Rose950
-        isLow -> Amber950
-        else -> Emerald950
-    }
-    val stockFg = when {
-        isOut -> Rose400
-        isLow -> Amber300
-        else -> Emerald300
-    }
-
     ElevatedCard(
         onClick = onOpenCalculator,
         modifier = Modifier
@@ -1143,13 +1073,13 @@ private fun ProductTileListRow(
                             )
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = stockBg,
-                                border = BorderStroke(1.dp, stockFg.copy(alpha = 0.4f))
+                                color = Cyan950,
+                                border = BorderStroke(1.dp, Cyan500.copy(alpha = 0.4f))
                             ) {
                                 Text(
-                                    text = if (isOut) "${product.stock} ctn • Libre" else "${product.stock} ctn",
+                                    text = product.finition.replaceFirstChar { it.uppercase() },
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = stockFg,
+                                    color = Cyan300,
                                     fontWeight = FontWeight.Black,
                                     modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                                 )
@@ -1282,12 +1212,12 @@ private fun CartPanelContent(
                     onClick = onCloseSheet,
                     modifier = Modifier.weight(1f).height(44.dp),
                     shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.5.dp, Navy950),
+                    border = BorderStroke(1.5.dp, Cyan500),
                     contentPadding = PaddingValues(horizontal = 6.dp)
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = null, tint = Navy950, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Add, contentDescription = null, tint = Cyan400, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(3.dp))
-                    Text("Catalogue", color = Navy950, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                    Text("Catalogue", color = Cyan400, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium, maxLines = 1)
                 }
             }
             Button(
@@ -1664,7 +1594,7 @@ private fun EditCartItemQuickDialog(
                 .padding(14.dp),
             shape = RoundedCornerShape(22.dp),
             color = Slate900,
-            border = BorderStroke(2.dp, Navy950)
+            border = BorderStroke(1.5.dp, Slate700)
         ) {
             Column(
                 modifier = Modifier
@@ -2000,7 +1930,7 @@ private fun DiversLineDialog(
                 .padding(14.dp),
             shape = RoundedCornerShape(22.dp),
             color = Slate900,
-            border = BorderStroke(2.dp, Navy950)
+            border = BorderStroke(1.5.dp, Slate700)
         ) {
             Column(
                 modifier = Modifier
@@ -2445,7 +2375,7 @@ private fun CheckoutModalDialog(
                 .padding(14.dp),
             shape = RoundedCornerShape(22.dp),
             color = Slate900,
-            border = BorderStroke(2.dp, Navy950)
+            border = BorderStroke(1.5.dp, Slate700)
         ) {
             Column(
                 modifier = Modifier
@@ -2491,8 +2421,10 @@ private fun CheckoutModalDialog(
                         },
                         label = { Text("Client Comptoir", fontWeight = FontWeight.Bold) },
                         colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Navy950,
-                            selectedLabelColor = OnDark
+                            selectedContainerColor = Cyan500,
+                            selectedLabelColor = OnDark,
+                            containerColor = Slate950,
+                            labelColor = Slate400
                         )
                     )
                     customers.forEach { c ->
@@ -2693,6 +2625,71 @@ private fun CheckoutModalDialog(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun PosDynamicFilterStrip(
+    title: String,
+    options: List<String>,
+    selected: String,
+    activeColor: androidx.compose.ui.graphics.Color,
+    accentTextColor: androidx.compose.ui.graphics.Color,
+    formatLabel: (String) -> String = { it },
+    testTagPrefix: String,
+    onSelect: (String) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = Slate950,
+            border = BorderStroke(1.dp, activeColor.copy(alpha = 0.45f))
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelSmall,
+                color = accentTextColor,
+                fontWeight = FontWeight.Black,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+            )
+        }
+        options.forEach { option ->
+            val isSelected = if (option == "Toutes") {
+                selected == "Toutes"
+            } else {
+                selected.equals(option, ignoreCase = true)
+            }
+            FilterChip(
+                selected = isSelected,
+                onClick = { onSelect(option) },
+                label = {
+                    Text(
+                        text = formatLabel(option),
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = activeColor,
+                    selectedLabelColor = OnDark,
+                    containerColor = Slate950,
+                    labelColor = Slate400
+                ),
+                border = FilterChipDefaults.filterChipBorder(
+                    enabled = true,
+                    selected = isSelected,
+                    borderColor = Slate800,
+                    selectedBorderColor = activeColor
+                ),
+                modifier = Modifier.testTag("${testTagPrefix}_${option}")
+            )
         }
     }
 }

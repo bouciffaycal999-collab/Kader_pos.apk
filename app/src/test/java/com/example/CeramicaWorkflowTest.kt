@@ -44,7 +44,6 @@ import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.PosScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.StockScreen
-import com.example.ui.screens.UsersScreen
 import com.example.ui.theme.KaderPosTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -81,27 +80,26 @@ class CeramicaWorkflowTest {
     }
 
     @Test
-    fun `default staff hierarchy has exact roles, no patron label, and strict prixAchat gating`() {
+    fun `default 2-user model has PIN-free Vendeur and PIN-0408 Admin without calculator tab`() {
         val users = PosSeeds.DEFAULT_USERS
-        assertEquals(8, users.size)
+        assertEquals(2, users.size)
         assertTrue(users.none { it.name.contains("Patron", ignoreCase = true) || it.role.contains("Patron", ignoreCase = true) })
 
-        val kader = users.first { it.name == "Kader" }
-        assertEquals("admin", kader.role)
-        assertTrue(kader.canViewPrixAchat)
-        assertTrue(kader.canManageUsers)
+        val admin = users.first { it.role == "admin" }
+        assertEquals("0408", admin.pin)
+        assertTrue(admin.canViewPrixAchat)
+        assertTrue(admin.canManageUsers)
+        assertFalse("calculator" in PosSeeds.ALL_TABS)
 
-        listOf("Walid", "Toufik", "Ihab").forEach { ownerName ->
-            val u = users.first { it.name == ownerName }
-            assertEquals("gerant", u.role)
-            assertTrue("$ownerName must see prixAchat", u.canViewPrixAchat)
-        }
-
-        listOf("Zohir", "Celia", "Alae", "Amine").forEach { sellerName ->
-            val u = users.first { it.name == sellerName }
-            assertEquals("vendeur", u.role)
-            assertFalse("$sellerName must NEVER see prixAchat", u.canViewPrixAchat)
-        }
+        val seller = users.first { it.role == "vendeur" }
+        assertEquals("", seller.pin)
+        assertFalse("Vendeur must NEVER see prixAchat", seller.canViewPrixAchat)
+        assertEquals(listOf("pos", "stock"), seller.allowedTabs)
+        val sellerPerms = PosSeeds.resolveEffectivePermissions(seller, PosSeeds.DEFAULT_ROLE_POLICIES)
+        assertTrue(sellerPerms.canAddProducts)
+        assertFalse(sellerPerms.canViewPrixAchat)
+        assertFalse(sellerPerms.canModifyPrices)
+        assertFalse(sellerPerms.canModifyStock)
     }
 
     @Test
@@ -497,23 +495,36 @@ class CeramicaWorkflowTest {
         try {
             val seededState = awaitState { !it.isLoading && it.products.isNotEmpty() && it.users.isNotEmpty() }
             val catalogProduct = seededState.products.first()
-            val initialStock = catalogProduct.stock
-            val zohirUser = seededState.users.first { it.name == "Zohir" }
-            val walidUser = seededState.users.first { it.name == "Walid" }
-            val kaderUser = seededState.users.first { it.name == "Kader" }
+            val adminUser = seededState.users.first { it.role == "admin" }
+            assertEquals("0408", adminUser.pin)
 
-            // 1. Unlock as Seller (Zohir)
-            vm.attemptUnlock(zohirUser, zohirUser.pin)
-            val sellerState = awaitState { !it.isLocked && it.currentUser?.role == "vendeur" }
-            assertFalse(sellerState.effectivePermissions.canViewPrixAchat)
-            assertFalse(sellerState.effectivePermissions.canModifyPrices)
-            assertFalse(sellerState.effectivePermissions.canModifyStock)
-            assertFalse(sellerState.effectivePermissions.canManageUsers)
+            // 1. Boots directly unlocked as PIN-free Vendeur with Vente + Stock add-product access only
+            assertFalse("App must start unlocked in Vendeur mode without PIN", seededState.isLocked)
+            assertEquals("u_vendeur", seededState.currentUser?.id)
+            assertEquals("vendeur", seededState.currentUser?.role)
+            assertFalse(seededState.effectivePermissions.canViewPrixAchat)
+            assertFalse(seededState.effectivePermissions.canModifyPrices)
+            assertFalse(seededState.effectivePermissions.canModifyStock)
+            assertTrue(seededState.effectivePermissions.canAddProducts)
+            assertFalse(seededState.effectivePermissions.canManageUsers)
 
-            // Seller cannot adjust stock or edit catalog product prices
-            vm.adjustStock(catalogProduct.id, 50)
-            vm.setStock(catalogProduct.id, 999)
-            vm.saveProduct(catalogProduct.copy(prix = 1.0, stock = 999))
+            // Seller cannot edit existing catalog product prices
+            vm.saveProduct(catalogProduct.copy(prix = 1.0))
+            // Seller CAN add a NEW product to Stock, with prixAchat stripped to 0.0
+            val sellerNewProd = TileProduct(
+                id = "prod_seller_added_1",
+                name = "90/90 TRAVERTIN ROYAL",
+                usine = "NOUVELLE_USINE",
+                dimension = "90×90",
+                m2Carton = 1.62,
+                pcs = 2,
+                prix = 2900.0,
+                prixAchat = 9999.0,
+                stock = 0,
+                finition = "lappato"
+            )
+            vm.saveProduct(sellerNewProd)
+
             // Seller calculator call attempting price override must be clamped to catalog price
             vm.confirmCalculatorToCart(
                 product = catalogProduct,
@@ -526,50 +537,52 @@ class CeramicaWorkflowTest {
                 editingItemId = null,
                 prixPiece = 10.0
             )
-            // Seller cannot change role policy or save staff user
-            val sellerPolicy = sellerState.rolePolicies.first { it.roleId == "vendeur" }
-            vm.saveRolePolicy(sellerPolicy.copy(canModifyStock = true))
 
-            val afterSellerActions = awaitState { it.cart.isNotEmpty() }
-            val reloadedProd = afterSellerActions.products.first { it.id == catalogProduct.id }
-            assertEquals(initialStock, reloadedProd.stock)
-            assertEquals(catalogProduct.prix, reloadedProd.prix, 0.001)
+            val afterSellerActions = awaitState { state ->
+                state.cart.isNotEmpty() && state.products.any { it.id == "prod_seller_added_1" }
+            }
+            val reloadedCatalogProd = afterSellerActions.products.first { it.id == catalogProduct.id }
+            assertEquals(catalogProduct.prix, reloadedCatalogProd.prix, 0.001)
             assertEquals(catalogProduct.prix, afterSellerActions.cart.first().prixUnitaire, 0.001)
-            assertFalse(afterSellerActions.rolePolicies.first { it.roleId == "vendeur" }.canModifyStock)
+            val savedNewProd = afterSellerActions.products.first { it.id == "prod_seller_added_1" }
+            assertEquals(0.0, savedNewProd.prixAchat, 0.001)
+            assertEquals("90×90", savedNewProd.dimension)
+            assertEquals("lappato", savedNewProd.finition)
 
-            // 2. Lock and unlock as Manager (Walid)
+            // 2. Wrong Admin PIN fails, 0408 unlocks Admin, and Admin can change PIN anytime
             vm.lockSession()
             awaitState { it.isLocked }
-            vm.attemptUnlock(walidUser, walidUser.pin)
-            val managerState = awaitState { !it.isLocked && it.currentUser?.role == "gerant" }
-            assertTrue(managerState.effectivePermissions.canViewPrixAchat)
-            assertTrue(managerState.effectivePermissions.canModifyPrices)
-            assertTrue(managerState.effectivePermissions.canModifyStock)
-            assertFalse(managerState.effectivePermissions.canManageUsers)
+            vm.attemptUnlock(adminUser, "9999")
+            val badPinState = awaitState { it.pinError != null }
+            assertTrue(badPinState.isLocked)
 
-            vm.adjustStock(catalogProduct.id, 5)
-            val afterManagerStock = awaitState { state ->
-                state.products.first { it.id == catalogProduct.id }.stock == initialStock + 5
-            }
-            assertEquals(initialStock + 5, afterManagerStock.products.first { it.id == catalogProduct.id }.stock)
-
-            // Manager still cannot manage users or alter role policies
-            vm.saveRolePolicy(sellerPolicy.copy(canModifyPrices = true))
-            val policyStillUnchanged = repo.getRolePoliciesSnapshot().first { it.roleId == "vendeur" }
-            assertFalse(policyStillUnchanged.canModifyPrices)
-
-            // 3. Unlock as Admin (Kader) and modify Seller role policy
-            vm.lockSession()
-            awaitState { it.isLocked }
-            vm.attemptUnlock(kaderUser, kaderUser.pin)
+            vm.attemptUnlock(adminUser, "0408")
             val adminState = awaitState { !it.isLocked && it.currentUser?.role == "admin" }
-            assertTrue(adminState.effectivePermissions.canManageUsers)
+            assertTrue(adminState.effectivePermissions.canViewPrixAchat)
+            assertTrue(adminState.effectivePermissions.canModifyPrices)
+            assertTrue(adminState.effectivePermissions.canModifyStock)
+            assertTrue(adminState.effectivePermissions.canViewSuppliers)
+            assertTrue(adminState.effectivePermissions.canViewCaisse)
 
-            vm.saveRolePolicy(sellerPolicy.copy(canModifyPrices = true))
-            val updatedState = awaitState { state ->
-                state.rolePolicies.firstOrNull { it.roleId == "vendeur" }?.canModifyPrices == true
-            }
-            assertTrue(updatedState.rolePolicies.first { it.roleId == "vendeur" }.canModifyPrices)
+            assertTrue(vm.changeAdminPin("2580"))
+            awaitState { state -> state.users.firstOrNull { it.role == "admin" }?.pin == "2580" }
+
+            // Re-verify old PIN 0408 no longer unlocks, new PIN 2580 works, and Vendeur still needs no PIN
+            vm.lockSession()
+            awaitState { it.isLocked }
+            val updatedAdmin = uiUser(vm, "admin")
+            vm.attemptUnlock(updatedAdmin, "0408")
+            val rejectedOld = awaitState { it.pinError != null }
+            assertTrue(rejectedOld.isLocked)
+
+            vm.attemptUnlock(updatedAdmin, "2580")
+            awaitState { !it.isLocked && it.currentUser?.role == "admin" }
+
+            vm.lockSession()
+            awaitState { it.isLocked }
+            vm.switchToSellerMode()
+            val quickSeller = awaitState { !it.isLocked && it.currentUser?.role == "vendeur" }
+            assertEquals("u_vendeur", quickSeller.currentUser?.id)
         } finally {
             subJob.cancel()
             vmStore.clear()
@@ -580,8 +593,11 @@ class CeramicaWorkflowTest {
         }
     }
 
+    private fun uiUser(vm: PosViewModel, role: String) =
+        vm.uiState.value.users.first { it.role == role }
+
     @Test
-    fun `calculator locks catalog prices when canModifyPrices is false and UsersScreen displays role policies`() {
+    fun `calculator renders prominent top result card and locks catalog prices when canModifyPrices is false`() {
         val sampleTile = TileProduct(
             id = "p_120_60_calc_test",
             name = "120/60 MARBRE ONYX",
@@ -610,40 +626,114 @@ class CeramicaWorkflowTest {
             }
         }
         composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("calc_result_hero_card").assertExists()
         composeTestRule.onNodeWithTag("calc_price_field").assertIsNotEnabled()
         composeTestRule.onNodeWithTag("calc_piece_price_field").assertIsNotEnabled()
     }
 
     @Test
-    fun `users screen renders role policy cards and gates management controls to admin`() {
-        val adminUser = PosSeeds.DEFAULT_USERS.first { it.role == "admin" }
-        val sellerUser = PosSeeds.DEFAULT_USERS.first { it.role == "vendeur" }
+    fun `pos screen renders 3 dynamic filter lines and surfaces newly added dimensions usines and finitions`() {
+        val products = listOf(
+            TileProduct(
+                id = "p_f1",
+                name = "60/60 CLASSICO",
+                usine = "BATI",
+                dimension = "60×60",
+                finition = "brillant",
+                m2Carton = 1.44,
+                pcs = 4,
+                prix = 1800.0,
+                prixAchat = 1200.0,
+                stock = 0
+            ),
+            TileProduct(
+                id = "p_f2",
+                name = "90/90 TRAVERTIN",
+                usine = "NEW_USINE",
+                dimension = "90×90",
+                finition = "lappato",
+                m2Carton = 1.62,
+                pcs = 2,
+                prix = 3200.0,
+                prixAchat = 2400.0,
+                stock = 0
+            )
+        )
         composeTestRule.setContent {
             KaderPosTheme {
-                UsersScreen(
-                    users = PosSeeds.DEFAULT_USERS,
-                    currentUser = adminUser,
-                    rolePolicies = PosSeeds.DEFAULT_ROLE_POLICIES,
-                    effectivePermissions = PosSeeds.resolveEffectivePermissions(adminUser, PosSeeds.DEFAULT_ROLE_POLICIES),
-                    onSaveUser = {},
-                    onDeleteUser = {},
-                    onSaveRolePolicy = {}
+                PosScreen(
+                    products = products,
+                    cart = emptyList(),
+                    freeLines = emptyList(),
+                    customers = PosSeeds.DEFAULT_CUSTOMERS,
+                    storeInfo = PosSeeds.DEFAULT_STORE_INFO,
+                    editingInvoice = null,
+                    canModifyPrices = false,
+                    onOpenCalculatorForProduct = {},
+                    onRequestDepotDispo = {},
+                    onOpenOneTimeProduct = {},
+                    onEditCartItem = {},
+                    onUpdateCartItemDirect = { _, _, _, _, _, _, _, _ -> },
+                    onAdjustCartItemCarton = { _, _ -> },
+                    onRemoveCartItem = {},
+                    onAddFreeLine = {},
+                    onUpdateFreeLine = {},
+                    onAdjustFreeLineQty = { _, _ -> },
+                    onRemoveFreeLine = {},
+                    onClearCart = {},
+                    onFinalizeSale = { _, _, _, _, _ -> }
                 )
             }
         }
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("role_policy_card_admin").assertExists()
-        composeTestRule.onNodeWithTag("role_policy_card_gerant").assertExists()
-        composeTestRule.onNodeWithTag("role_policy_card_vendeur").assertExists()
-        composeTestRule.onNodeWithTag("users_add_profile_btn").assertExists()
-        composeTestRule.onNodeWithTag("edit_policy_btn_vendeur").assertExists()
+        composeTestRule.onNodeWithTag("pos_filter_dim_Toutes").assertExists()
+        composeTestRule.onNodeWithTag("pos_filter_dim_90×90").assertExists()
+        composeTestRule.onNodeWithTag("pos_filter_usine_Toutes").assertExists()
+        composeTestRule.onNodeWithTag("pos_filter_usine_NEW_USINE").assertExists()
+        composeTestRule.onNodeWithTag("pos_filter_finition_Toutes").assertExists()
+        composeTestRule.onNodeWithTag("pos_filter_finition_lappato").assertExists()
 
-        // Ensure effectivePermissions helper for Seller strictly disables management
-        val sellerPerms = PosSeeds.resolveEffectivePermissions(sellerUser, PosSeeds.DEFAULT_ROLE_POLICIES)
-        assertFalse(sellerPerms.canManageUsers)
-        assertFalse(sellerPerms.canViewPrixAchat)
-        assertFalse(sellerPerms.canModifyPrices)
-        assertFalse(sellerPerms.canModifyStock)
+        // Clicking new dimension chip filters out 60x60 product
+        composeTestRule.onNodeWithTag("pos_filter_dim_90×90").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("90/90 TRAVERTIN").assertExists()
+    }
+
+    @Test
+    fun `stock screen lets Vendeur add new product without prixAchat while Admin sees prixAchat`() {
+        val sampleProd = TileProduct(
+            id = "stk_rbac_1",
+            name = "60/60 CREMA",
+            usine = "BATI",
+            dimension = "60×60",
+            finition = "mat",
+            m2Carton = 1.44,
+            pcs = 4,
+            prix = 1850.0,
+            prixAchat = 1350.0,
+            stock = 0
+        )
+        composeTestRule.setContent {
+            KaderPosTheme {
+                StockScreen(
+                    products = listOf(sampleProd),
+                    storeInfo = PosSeeds.DEFAULT_STORE_INFO,
+                    canModifyStock = false,
+                    canAddProducts = true,
+                    canViewPrixAchat = false,
+                    onAdjustStock = { _, _ -> },
+                    onSetStock = { _, _ -> },
+                    onSaveProduct = {},
+                    onRequestDepotDispo = {}
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("stock_add_model_btn").assertExists().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("product_fiche_dialog").assertExists()
+        composeTestRule.onNodeWithTag("fiche_finition_input").assertExists()
+        assertEquals(0, composeTestRule.onAllNodesWithTag("fiche_prix_achat_field").fetchSemanticsNodes().size)
     }
 
     @Test
@@ -693,9 +783,9 @@ class CeramicaWorkflowTest {
             assertFalse(ready.isNetworkAvailable)
             assertFalse(ready.isCloudSynced)
 
-            val kader = ready.users.first { it.name == "Kader" }
-            vm.attemptUnlock(kader, kader.pin)
-            val unlocked = awaitState { !it.isLocked }
+            val admin = ready.users.first { it.role == "admin" }
+            vm.attemptUnlock(admin, admin.pin)
+            val unlocked = awaitState { !it.isLocked && it.currentUser?.role == "admin" }
             val prod = unlocked.products.first()
 
             vm.confirmCalculatorToCart(
@@ -711,27 +801,22 @@ class CeramicaWorkflowTest {
             awaitState { it.cart.isNotEmpty() }
 
             vm.finalizeSale(
-                client = InvoiceClient(nom = "Client Hors Ligne"),
+                client = InvoiceClient(nom = "Client Local"),
                 remise = 0.0,
                 montantPaye = 1000.0,
                 modePaiement = "Espèces",
                 notes = ""
             )
 
-            val afterSale = awaitState { it.previewInvoice != null }
-            assertTrue(afterSale.previewInvoice != null)
-            withTimeout(5_000L) {
-                while (!repo.hasPendingOfflineSync()) {
-                    Shadows.shadowOf(Looper.getMainLooper()).idle()
-                    delay(15)
-                }
+            val afterSale = awaitState { state ->
+                state.previewInvoice != null && state.invoices.any { it.client.nom == "Client Local" }
             }
-            assertTrue(repo.hasPendingOfflineSync())
+            assertTrue(afterSale.previewInvoice != null)
+            assertTrue(afterSale.invoices.any { it.client.nom == "Client Local" })
 
             networkFlow.value = true
             val reconnected = awaitState { it.isNetworkAvailable }
             assertTrue(reconnected.isNetworkAvailable)
-            // Still false because firestoreRepo is null (local mode)
             assertFalse(reconnected.isCloudSynced)
         } finally {
             subJob.cancel()
@@ -744,24 +829,18 @@ class CeramicaWorkflowTest {
     }
 
     @Test
-    fun `settings screen shows live offline notice and disables sync button when internet is unavailable`() {
+    fun `settings screen shows Admin PIN editor, dual WhatsApp numbers, and no online sync controls`() {
         composeTestRule.setContent {
             KaderPosTheme {
                 SettingsScreen(
                     storeInfo = PosSeeds.DEFAULT_STORE_INFO,
                     settings = AppSettings(),
-                    autoEmailPdf = false,
-                    firebaseUserEmail = "kader@ceramica.dz",
-                    isCloudSynced = false,
-                    cloudSyncError = null,
-                    onSignInGoogle = { null },
-                    onSignOutGoogle = {},
-                    isNetworkAvailable = false,
-                    pendingCloudWrites = 2,
-                    onRetryCloudSync = {},
+                    autoWhatsappPhoto = true,
+                    isAdmin = true,
+                    onChangeAdminPin = { true },
                     onSaveStoreInfo = {},
                     onSaveSettings = {},
-                    onSetAutoEmailPdf = {},
+                    onSetAutoWhatsappPhoto = {},
                     onResetCatalog = {},
                     onExportJson = {},
                     onImportJson = {}
@@ -769,11 +848,12 @@ class CeramicaWorkflowTest {
             }
         }
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithText("Pas de connexion Internet — modifications en file locale").assertExists()
-        composeTestRule.onNodeWithText("2 écriture(s) Cloud en cours / file d'attente...").assertExists()
-        composeTestRule.onNodeWithTag("settings_cloud_sync_btn").assertIsNotEnabled()
-        composeTestRule.onNodeWithTag("settings_depot_watch_switch").assertExists()
-        composeTestRule.onNodeWithTag("test_out_of_app_notif_btn").assertExists()
+        composeTestRule.onNodeWithTag("settings_new_pin_input").assertExists()
+        composeTestRule.onNodeWithTag("settings_save_pin_btn").assertExists()
+        composeTestRule.onNodeWithTag("settings_wa_principal_input").assertExists()
+        composeTestRule.onNodeWithTag("settings_wa_gerant_input").assertExists()
+        composeTestRule.onNodeWithTag("settings_auto_wa_photo_switch").assertExists()
+        assertEquals(0, composeTestRule.onAllNodesWithTag("settings_cloud_sync_btn").fetchSemanticsNodes().size)
     }
 
     @Test
@@ -995,6 +1075,7 @@ class CeramicaWorkflowTest {
                     products = listOf(sampleProd),
                     storeInfo = PosSeeds.DEFAULT_STORE_INFO,
                     canModifyStock = true,
+                    canAddProducts = true,
                     canViewPrixAchat = true,
                     onAdjustStock = { _, _ -> },
                     onSetStock = { _, _ -> },
@@ -1090,9 +1171,8 @@ class CeramicaWorkflowTest {
                 KaderPosTheme {
                     InvoicePreviewPrintSheet(
                         invoice = invoice,
-                        storeInfo = PosSeeds.DEFAULT_STORE_INFO,
+                        storeInfo = PosSeeds.DEFAULT_STORE_INFO.copy(gerantWaPhone = "0550112233"),
                         settings = AppSettings(),
-                        autoEmailPdf = false,
                         autoWhatsappPhoto = true,
                         onMarkWhatsappSent = { markedInvoiceId = it },
                         onUpdateSettings = {},
@@ -1132,6 +1212,7 @@ class CeramicaWorkflowTest {
             assertTrue(streams.any { it.toString().endsWith(".pdf") })
             assertEquals(invoice.id, markedInvoiceId)
             composeTestRule.waitForIdle()
+            composeTestRule.onNodeWithTag("invoice_wa_gerant_photo_btn").assertExists()
             composeTestRule.onNodeWithTag("invoice_print_pdf_btn").assertIsEnabled()
             composeTestRule.onNodeWithTag("invoice_open_pdf_btn").assertIsEnabled()
             composeTestRule.onNodeWithTag("invoice_gmail_pdf_btn").assertDoesNotExist()

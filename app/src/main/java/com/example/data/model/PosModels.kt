@@ -191,6 +191,7 @@ data class EffectivePermissions(
     val canViewPrixAchat: Boolean,
     val canModifyPrices: Boolean,
     val canModifyStock: Boolean,
+    val canAddProducts: Boolean,
     val canEditInvoices: Boolean,
     val canDeleteInvoices: Boolean,
     val canViewSuppliers: Boolean,
@@ -212,6 +213,7 @@ data class StoreInfo(
     val nif: String,
     val nis: String,
     val ai: String,
+    val gerantWaPhone: String = "",
     val invoiceWaRecipients: List<WaRecipient> = PosSeeds.DEFAULT_INVOICE_WA_RECIPIENTS,
     val dispoWaRecipients: List<WaRecipient> = PosSeeds.DEFAULT_DISPO_WA_RECIPIENTS
 )
@@ -253,20 +255,20 @@ data class DiversPreset(
 object PosSeeds {
     val ALL_TABS = listOf(
         "pos", "stock", "invoices", "dashboard",
-        "customers", "suppliers", "caisse", "users", "settings", "calculator"
+        "customers", "suppliers", "caisse", "settings"
     )
 
-    val MANAGER_TABS = ALL_TABS.filterNot { it == "users" }
+    val MANAGER_TABS = ALL_TABS
 
-    val SELLER_TABS = listOf("pos", "stock", "invoices", "customers", "calculator")
+    val SELLER_TABS = listOf("pos", "stock")
 
-    val VALID_ROLES = listOf("admin", "gerant", "vendeur")
+    val VALID_ROLES = listOf("admin", "vendeur")
 
     val DEFAULT_ROLE_POLICIES = listOf(
         RolePolicy(
             roleId = "admin",
-            displayName = "Admin",
-            description = "Accès complet : stock, prix d'achat, marges, tarifs et gestion équipe",
+            displayName = "Administrateur",
+            description = "Accès complet : prix d'achat, situation fournisseurs, caisse, factures, paramètres et PIN",
             canViewPrixAchat = true,
             canModifyPrices = true,
             canModifyStock = true,
@@ -278,27 +280,13 @@ object PosSeeds {
             allowedTabs = ALL_TABS
         ),
         RolePolicy(
-            roleId = "gerant",
-            displayName = "Manager (Owner & Gérant)",
-            description = "Gestion commerciale : stock, prix d'achat, tarifs, caisse et usines",
-            canViewPrixAchat = true,
-            canModifyPrices = true,
-            canModifyStock = true,
-            canEditInvoices = true,
-            canDeleteInvoices = true,
-            canViewSuppliers = true,
-            canViewCaisse = true,
-            canManageUsers = false,
-            allowedTabs = MANAGER_TABS
-        ),
-        RolePolicy(
             roleId = "vendeur",
-            displayName = "Seller (Vendeur)",
-            description = "Vente au comptoir & devis : prix d'achat masqué, tarifs et stock verrouillés",
+            displayName = "Vendeur",
+            description = "Accès direct sans PIN : section Vente & ajout produits Stock (prix d'achat masqué)",
             canViewPrixAchat = false,
             canModifyPrices = false,
             canModifyStock = false,
-            canEditInvoices = true,
+            canEditInvoices = false,
             canDeleteInvoices = false,
             canViewSuppliers = false,
             canViewCaisse = false,
@@ -314,69 +302,46 @@ object PosSeeds {
         user: StaffUser?,
         policies: List<RolePolicy> = DEFAULT_ROLE_POLICIES
     ): EffectivePermissions {
-        if (user == null) {
-            val fallback = defaultPolicyForRole("vendeur")
+        if (user == null || user.role != "admin") {
             return EffectivePermissions(
-                roleId = fallback.roleId,
+                roleId = "vendeur",
                 canViewPrixAchat = false,
                 canModifyPrices = false,
                 canModifyStock = false,
+                canAddProducts = true,
                 canEditInvoices = false,
                 canDeleteInvoices = false,
                 canViewSuppliers = false,
                 canViewCaisse = false,
                 canManageUsers = false,
                 canHideInvoicePrices = false,
-                allowedTabs = listOf("pos", "calculator")
+                allowedTabs = SELLER_TABS
             )
         }
-        val policy = policies.find { it.roleId == user.role } ?: defaultPolicyForRole(user.role)
-        if (user.role == "admin") {
-            return EffectivePermissions(
-                roleId = "admin",
-                canViewPrixAchat = true,
-                canModifyPrices = true,
-                canModifyStock = true,
-                canEditInvoices = true,
-                canDeleteInvoices = true,
-                canViewSuppliers = true,
-                canViewCaisse = true,
-                canManageUsers = true,
-                canHideInvoicePrices = true,
-                allowedTabs = ALL_TABS
-            )
-        }
-        val policyTabs = policy.allowedTabs.ifEmpty {
-            if (user.role == "gerant") MANAGER_TABS else SELLER_TABS
-        }
-        val baseUserTabs = user.allowedTabs.ifEmpty { policyTabs }
-        val resolvedTabs = (baseUserTabs.filter { it in policyTabs } + "calculator")
-            .distinct()
-            .ifEmpty { listOf("pos", "calculator") }
-        val canViewCost = policy.canViewPrixAchat && user.canViewPrixAchat
         return EffectivePermissions(
-            roleId = user.role,
-            canViewPrixAchat = canViewCost,
-            canModifyPrices = policy.canModifyPrices && user.canModifyPrices,
-            canModifyStock = policy.canModifyStock && user.canModifyStock,
-            canEditInvoices = policy.canEditInvoices && user.canEditInvoices,
-            canDeleteInvoices = policy.canDeleteInvoices && user.canDeleteInvoices,
-            canViewSuppliers = policy.canViewSuppliers && user.canViewSuppliers,
-            canViewCaisse = policy.canViewCaisse && user.canViewCaisse,
-            canManageUsers = policy.canManageUsers && user.canManageUsers,
-            canHideInvoicePrices = canViewCost,
-            allowedTabs = resolvedTabs
+            roleId = "admin",
+            canViewPrixAchat = true,
+            canModifyPrices = true,
+            canModifyStock = true,
+            canAddProducts = true,
+            canEditInvoices = true,
+            canDeleteInvoices = true,
+            canViewSuppliers = true,
+            canViewCaisse = true,
+            canManageUsers = true,
+            canHideInvoicePrices = true,
+            allowedTabs = ALL_TABS
         )
     }
 
     val SITES = listOf("Depot Remchi", "Magasin Ihab", "Magasin Zohir")
 
     val DEFAULT_INVOICE_WA_RECIPIENTS = listOf(
-        WaRecipient(name = "Bureau / Kader (0676754124)", phone = "0676754124")
+        WaRecipient(name = "Administrateur (0676754124)", phone = "0676754124")
     )
 
     val DEFAULT_DISPO_WA_RECIPIENTS = listOf(
-        WaRecipient(name = "Bureau / Kader (0676754124)", phone = "0676754124")
+        WaRecipient(name = "Principal / Admin (0676754124)", phone = "0676754124")
     )
 
     val DEFAULT_STORE_INFO = StoreInfo(
@@ -391,6 +356,7 @@ object PosSeeds {
         nif = "002416012845690",
         nis = "002416012800145",
         ai = "16041285098",
+        gerantWaPhone = "",
         invoiceWaRecipients = DEFAULT_INVOICE_WA_RECIPIENTS,
         dispoWaRecipients = DEFAULT_DISPO_WA_RECIPIENTS
     )
@@ -399,10 +365,28 @@ object PosSeeds {
 
     val DEFAULT_USERS = listOf(
         StaffUser(
+            id = "u_vendeur",
+            name = "Vendeur",
+            role = "vendeur",
+            pin = "",
+            magasin = "Depot Remchi",
+            allowedTabs = SELLER_TABS,
+            canEditInvoices = false,
+            canDeleteInvoices = false,
+            canModifyStock = false,
+            canViewSuppliers = false,
+            canViewCaisse = false,
+            canManageUsers = false,
+            active = true,
+            phone = "",
+            canViewPrixAchat = false,
+            canModifyPrices = false
+        ),
+        StaffUser(
             id = "u_kader",
-            name = "Kader",
+            name = "Administrateur",
             role = "admin",
-            pin = "1234",
+            pin = "0408",
             magasin = "Depot Remchi",
             allowedTabs = ALL_TABS,
             canEditInvoices = true,
@@ -415,132 +399,6 @@ object PosSeeds {
             phone = "0676754124",
             canViewPrixAchat = true,
             canModifyPrices = true
-        ),
-        StaffUser(
-            id = "u_walid",
-            name = "Walid",
-            role = "gerant",
-            pin = "2222",
-            magasin = "Depot Remchi",
-            allowedTabs = MANAGER_TABS,
-            canEditInvoices = true,
-            canDeleteInvoices = true,
-            canModifyStock = true,
-            canViewSuppliers = true,
-            canViewCaisse = true,
-            canManageUsers = false,
-            active = true,
-            phone = "",
-            canViewPrixAchat = true,
-            canModifyPrices = true
-        ),
-        StaffUser(
-            id = "u_toufik",
-            name = "Toufik",
-            role = "gerant",
-            pin = "3333",
-            magasin = "Depot Remchi",
-            allowedTabs = MANAGER_TABS,
-            canEditInvoices = true,
-            canDeleteInvoices = true,
-            canModifyStock = true,
-            canViewSuppliers = true,
-            canViewCaisse = true,
-            canManageUsers = false,
-            active = true,
-            phone = "",
-            canViewPrixAchat = true,
-            canModifyPrices = true
-        ),
-        StaffUser(
-            id = "u_ihab",
-            name = "Ihab",
-            role = "gerant",
-            pin = "4444",
-            magasin = "Magasin Ihab",
-            allowedTabs = MANAGER_TABS,
-            canEditInvoices = true,
-            canDeleteInvoices = true,
-            canModifyStock = true,
-            canViewSuppliers = true,
-            canViewCaisse = true,
-            canManageUsers = false,
-            active = true,
-            phone = "",
-            canViewPrixAchat = true,
-            canModifyPrices = true
-        ),
-        StaffUser(
-            id = "u_zohir",
-            name = "Zohir",
-            role = "vendeur",
-            pin = "0001",
-            magasin = "Magasin Zohir",
-            allowedTabs = SELLER_TABS,
-            canEditInvoices = true,
-            canDeleteInvoices = false,
-            canModifyStock = false,
-            canViewSuppliers = false,
-            canViewCaisse = false,
-            canManageUsers = false,
-            active = true,
-            phone = "",
-            canViewPrixAchat = false,
-            canModifyPrices = false
-        ),
-        StaffUser(
-            id = "u_celia",
-            name = "Celia",
-            role = "vendeur",
-            pin = "0002",
-            magasin = "Depot Remchi",
-            allowedTabs = SELLER_TABS,
-            canEditInvoices = true,
-            canDeleteInvoices = false,
-            canModifyStock = false,
-            canViewSuppliers = false,
-            canViewCaisse = false,
-            canManageUsers = false,
-            active = true,
-            phone = "",
-            canViewPrixAchat = false,
-            canModifyPrices = false
-        ),
-        StaffUser(
-            id = "u_alae",
-            name = "Alae",
-            role = "vendeur",
-            pin = "0003",
-            magasin = "Depot Remchi",
-            allowedTabs = SELLER_TABS,
-            canEditInvoices = true,
-            canDeleteInvoices = false,
-            canModifyStock = false,
-            canViewSuppliers = false,
-            canViewCaisse = false,
-            canManageUsers = false,
-            active = true,
-            phone = "",
-            canViewPrixAchat = false,
-            canModifyPrices = false
-        ),
-        StaffUser(
-            id = "u_amin",
-            name = "Amine",
-            role = "vendeur",
-            pin = "0004",
-            magasin = "Depot Remchi",
-            allowedTabs = SELLER_TABS,
-            canEditInvoices = true,
-            canDeleteInvoices = false,
-            canModifyStock = false,
-            canViewSuppliers = false,
-            canViewCaisse = false,
-            canManageUsers = false,
-            active = true,
-            phone = "",
-            canViewPrixAchat = false,
-            canModifyPrices = false
         )
     )
 

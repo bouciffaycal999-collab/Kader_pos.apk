@@ -194,7 +194,7 @@ fun DashboardScreen(
                 elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
             ) {
                 Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Performance par Site", style = MaterialTheme.typography.titleMedium, color = Navy950, fontWeight = FontWeight.Black)
+                    Text("Performance par Site", style = MaterialTheme.typography.titleMedium, color = Slate100, fontWeight = FontWeight.Black)
                     PosSeeds.SITES.forEach { site ->
                         val siteInvoices = invoices.filter { it.magasin == site }
                         val siteCa = siteInvoices.sumOf { it.totalNet }
@@ -222,7 +222,7 @@ fun DashboardScreen(
                 elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
             ) {
                 Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Top 10 Carreaux Vendus", style = MaterialTheme.typography.titleMedium, color = Navy950, fontWeight = FontWeight.Black)
+                    Text("Top 10 Carreaux Vendus", style = MaterialTheme.typography.titleMedium, color = Slate100, fontWeight = FontWeight.Black)
                     if (topTiles.isEmpty()) {
                         Text("Aucune vente sur la période sélectionnée.", style = MaterialTheme.typography.bodyMedium, color = Slate400)
                     } else {

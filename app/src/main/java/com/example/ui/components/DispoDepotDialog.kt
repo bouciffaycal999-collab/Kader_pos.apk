@@ -60,8 +60,7 @@ import com.example.ui.theme.Slate950
 fun buildDispoDepotMessage(product: TileProduct): String = buildString {
     appendLine("📦 *DEMANDE DISPO DÉPÔT — CERAMICA*")
     appendLine("Produit : ${product.name}")
-    appendLine("Usine / Format : ${product.usine} • ${product.dimension} (${formatM2(product.m2Carton)} m²/ctn)")
-    appendLine("Stock actuel appli : ${product.stock} ctn")
+    appendLine("Usine / Format : ${product.usine} • ${product.dimension} (${product.finition}) • ${formatM2(product.m2Carton)} m²/ctn")
     appendLine("Merci de confirmer la disponibilité physique au dépôt.")
 }
 
@@ -118,6 +117,16 @@ fun DispoDepotRecipientsDialog(
     val context = LocalContext.current
     val message = remember(product) { buildDispoDepotMessage(product) }
 
+    val effectiveRecipients = remember(recipients) {
+        val principalDigits = PosSeeds.WHATSAPP_MANAGEMENT
+        val principal = WaRecipient(name = "Principal (0676754124)", phone = "0676754124")
+        val extras = recipients.filter {
+            val d = com.example.data.model.toDzWhatsAppDigits(it.phone)
+            d != null && d != principalDigits
+        }.distinctBy { com.example.data.model.toDzWhatsAppDigits(it.phone) }
+        listOf(principal) + extras
+    }
+
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
             modifier = Modifier
@@ -166,11 +175,11 @@ fun DispoDepotRecipientsDialog(
                                 Text(
                                     text = "Demande Dispo Dépôt",
                                     style = MaterialTheme.typography.titleMedium,
-                                    color = Navy950,
+                                    color = Slate100,
                                     fontWeight = FontWeight.Black
                                 )
                                 Text(
-                                    text = "${product.name} (${product.stock} ctn)",
+                                    text = "${product.name} • ${product.dimension}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Cyan300,
                                     fontWeight = FontWeight.Bold,
@@ -194,59 +203,59 @@ fun DispoDepotRecipientsDialog(
                 }
 
                 Text(
-                    text = "Alerte Direction enregistrée. Envoyer la demande sur WhatsApp (0676754124 uniquement) :",
+                    text = "Envoyer la demande de disponibilité par WhatsApp (Principal : 0676754124) :",
                     style = MaterialTheme.typography.labelLarge,
                     color = Slate400,
                     fontWeight = FontWeight.Bold
                 )
 
-                val soleRecipient = WaRecipient(name = "Bureau / Kader (0676754124)", phone = "0676754124")
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = Slate950,
-                    border = BorderStroke(1.dp, Slate800)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                effectiveRecipients.forEachIndexed { idx, recipient ->
+                    val targetDigits = com.example.data.model.toDzWhatsAppDigits(recipient.phone)
+                        ?: PosSeeds.WHATSAPP_MANAGEMENT
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = Slate950,
+                        border = BorderStroke(1.dp, if (idx == 0) Cyan500.copy(alpha = 0.55f) else Slate800)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = soleRecipient.name,
-                                style = MaterialTheme.typography.titleSmall,
-                                color = Slate100,
-                                fontWeight = FontWeight.Black
-                            )
-                            Text(
-                                text = soleRecipient.phone,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Cyan400,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Button(
-                            onClick = {
-                                dispatchWhatsAppText(context, PosSeeds.WHATSAPP_MANAGEMENT, message)
-                                onDismiss()
-                            },
+                        Row(
                             modifier = Modifier
-                                .height(48.dp)
-                                .testTag("dispo_wa_recipient_${soleRecipient.name}"),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Emerald500,
-                                contentColor = OnDark
-                            )
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "WhatsApp",
-                                fontWeight = FontWeight.Black
-                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = recipient.name,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = Slate100,
+                                    fontWeight = FontWeight.Black
+                                )
+                                Text(
+                                    text = recipient.phone,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Cyan400,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Button(
+                                onClick = {
+                                    dispatchWhatsAppText(context, targetDigits, message)
+                                    onDismiss()
+                                },
+                                modifier = Modifier
+                                    .height(48.dp)
+                                    .testTag("dispo_wa_recipient_${recipient.name}"),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Emerald500,
+                                    contentColor = OnDark
+                                )
+                            ) {
+                                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("WhatsApp", fontWeight = FontWeight.Black)
+                            }
                         }
                     }
                 }

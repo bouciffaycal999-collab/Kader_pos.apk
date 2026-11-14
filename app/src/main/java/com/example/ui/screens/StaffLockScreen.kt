@@ -6,7 +6,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,16 +14,18 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.AdminPanelSettings
+import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Storefront
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -39,14 +40,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.data.model.PosSeeds
 import com.example.data.model.StaffUser
 import com.example.ui.components.NonImeNumericKeypad
 import com.example.ui.components.applyKeypadInput
+import com.example.ui.theme.Amber400
 import com.example.ui.theme.Amber500
 import com.example.ui.theme.Cyan400
-import com.example.ui.theme.Navy800
+import com.example.ui.theme.Cyan500
+import com.example.ui.theme.Cyan950
+import com.example.ui.theme.Emerald400
+import com.example.ui.theme.Emerald500
 import com.example.ui.theme.Navy950
 import com.example.ui.theme.OnDark
 import com.example.ui.theme.Rose400
@@ -66,10 +71,19 @@ fun StaffLockScreen(
     onClearError: () -> Unit,
     onUnlock: (StaffUser, String) -> Unit
 ) {
-    val activeUsers = remember(users) { users.filter { it.active } }
+    val activeUsers = remember(users) {
+        users.filter { it.active }.ifEmpty { PosSeeds.DEFAULT_USERS }
+    }
+    val sellerUser = remember(activeUsers) {
+        activeUsers.find { it.role != "admin" } ?: PosSeeds.DEFAULT_USERS.first { it.role != "admin" }
+    }
+    val adminUser = remember(activeUsers) {
+        activeUsers.find { it.role == "admin" } ?: PosSeeds.DEFAULT_USERS.first { it.role == "admin" }
+    }
+
     var selectedUser by remember(activeUsers, initialSelectedUser) {
         mutableStateOf(
-            activeUsers.find { it.id == initialSelectedUser?.id } ?: activeUsers.firstOrNull()
+            if (initialSelectedUser?.role == "admin") adminUser else adminUser
         )
     }
     var pinBuffer by remember { mutableStateOf("") }
@@ -97,14 +111,14 @@ fun StaffLockScreen(
                     shape = CircleShape,
                     color = Navy950,
                     border = BorderStroke(2.dp, Amber500),
-                    modifier = Modifier.size(68.dp)
+                    modifier = Modifier.size(64.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            imageVector = Icons.Default.Lock,
-                            contentDescription = "Verrouillé",
-                            tint = Amber500,
-                            modifier = Modifier.size(32.dp)
+                            imageVector = Icons.Default.AdminPanelSettings,
+                            contentDescription = "Choix Profil",
+                            tint = Amber400,
+                            modifier = Modifier.size(30.dp)
                         )
                     }
                 }
@@ -113,65 +127,86 @@ fun StaffLockScreen(
                     Text(
                         text = "CERAMICA POS",
                         style = MaterialTheme.typography.headlineMedium,
-                        color = Navy950,
+                        color = Slate100,
                         fontWeight = FontWeight.Black
                     )
                     Text(
-                        text = "Connexion Rapide : Nom + Code PIN",
+                        text = "Vendeur sans PIN • Administrateur par Code PIN",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Cyan400,
                         fontWeight = FontWeight.Bold
                     )
                 }
 
-                // Name + Role selector pills (Name & PIN only — zero email)
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    contentPadding = PaddingValues(horizontal = 4.dp),
-                    modifier = Modifier.fillMaxWidth()
+                // Direct 1-tap Seller Entry (No PIN)
+                Button(
+                    onClick = { onUnlock(sellerUser, "") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(58.dp)
+                        .testTag("lock_user_${sellerUser.id}"),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Emerald500, contentColor = OnDark)
                 ) {
-                    items(activeUsers, key = { it.id }) { user ->
-                        val isSel = selectedUser?.id == user.id
+                    Icon(Icons.Default.Storefront, contentDescription = null, modifier = Modifier.size(22.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "Accès Vendeur (Vente & Stock) — Sans PIN",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Black
+                    )
+                }
+
+                // Profile Selector Row (2 Users)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    listOf(sellerUser, adminUser).forEach { user ->
+                        val isSel = selectedUser.id == user.id
+                        val isAdm = user.role == "admin"
                         Surface(
                             modifier = Modifier
+                                .weight(1f)
                                 .clip(RoundedCornerShape(16.dp))
                                 .clickable {
-                                    selectedUser = user
-                                    pinBuffer = ""
-                                    onClearError()
+                                    if (!isAdm) {
+                                        onUnlock(user, "")
+                                    } else {
+                                        selectedUser = user
+                                        pinBuffer = ""
+                                        onClearError()
+                                    }
                                 }
-                                .testTag("lock_user_${user.id}"),
+                                .testTag("lock_card_${user.id}"),
                             shape = RoundedCornerShape(16.dp),
                             color = if (isSel) Navy950 else Slate900,
-                            border = BorderStroke(if (isSel) 2.dp else 1.dp, if (isSel) Amber500 else Slate700)
+                            border = BorderStroke(
+                                if (isSel) 2.dp else 1.dp,
+                                if (isSel) Amber500 else Slate700
+                            )
                         ) {
                             Column(
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Person,
+                                    imageVector = if (isAdm) Icons.Default.AdminPanelSettings else Icons.Default.LockOpen,
                                     contentDescription = null,
-                                    tint = if (isSel) Amber500 else Cyan400,
+                                    tint = if (isAdm) Amber400 else Emerald400,
                                     modifier = Modifier.size(22.dp)
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = user.name,
                                     style = MaterialTheme.typography.labelLarge,
-                                    color = if (isSel) OnDark else Slate100,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    color = Slate100,
+                                    fontWeight = FontWeight.Black
                                 )
                                 Text(
-                                    text = when (user.role) {
-                                        "admin" -> "Admin"
-                                        "gerant" -> "Owner & Gérant"
-                                        else -> "Vendeur"
-                                    },
+                                    text = if (isAdm) "Code PIN requis" else "Accès direct",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (isSel) Amber500 else Slate400,
+                                    color = if (isAdm) Amber400 else Cyan400,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -179,7 +214,7 @@ fun StaffLockScreen(
                     }
                 }
 
-                // PIN dots display (zero IME)
+                // Admin PIN entry section
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(18.dp),
@@ -192,10 +227,10 @@ fun StaffLockScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            text = selectedUser?.let { "Code PIN — ${it.name}" } ?: "Code PIN",
+                            text = "Code PIN Administrateur",
                             style = MaterialTheme.typography.titleMedium,
-                            color = Navy950,
-                            fontWeight = FontWeight.Bold
+                            color = Slate100,
+                            fontWeight = FontWeight.Black
                         )
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -207,7 +242,7 @@ fun StaffLockScreen(
                                     modifier = Modifier
                                         .size(20.dp)
                                         .clip(CircleShape)
-                                        .background(if (filled) Amber500 else Slate850)
+                                        .background(if (filled) Amber400 else Slate850)
                                 )
                             }
                         }
@@ -239,30 +274,19 @@ fun StaffLockScreen(
                         )
                         val trimmed = next.take(4)
                         pinBuffer = trimmed
-                        val user = selectedUser
-                        if (user != null && trimmed.length == 4) {
-                            onUnlock(user, trimmed)
-                            if (trimmed != user.pin) {
+                        if (trimmed.length == 4) {
+                            onUnlock(adminUser, trimmed)
+                            if (trimmed != adminUser.pin) {
                                 pinBuffer = ""
                             }
                         }
                     },
                     allowDecimal = false,
                     onValidate = {
-                        val user = selectedUser
-                        if (user != null) {
-                            onUnlock(user, pinBuffer)
-                            if (pinBuffer != user.pin) pinBuffer = ""
-                        }
+                        onUnlock(adminUser, pinBuffer)
+                        if (pinBuffer != adminUser.pin) pinBuffer = ""
                     },
-                    validateLabel = "Déverrouiller (${
-                        when (selectedUser?.role) {
-                            "admin" -> "ADMIN"
-                            "gerant" -> "OWNER & GÉRANT"
-                            "vendeur" -> "VENDEUR"
-                            else -> "OK"
-                        }
-                    })",
+                    validateLabel = "Accès Administrateur",
                     accentColor = Amber500
                 )
             }

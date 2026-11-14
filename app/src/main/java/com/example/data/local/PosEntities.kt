@@ -542,6 +542,7 @@ object PosJsonMapper {
         put("nif", info.nif)
         put("nis", info.nis)
         put("ai", info.ai)
+        put("gerantWaPhone", info.gerantWaPhone)
         put("invoiceWaRecipients", waRecipientsToJsonArray(info.invoiceWaRecipients))
         put("dispoWaRecipients", waRecipientsToJsonArray(info.dispoWaRecipients))
     }.toString()
@@ -560,6 +561,7 @@ object PosJsonMapper {
             nif = o.optString("nif", fallback.nif),
             nis = o.optString("nis", fallback.nis),
             ai = o.optString("ai", fallback.ai),
+            gerantWaPhone = o.optString("gerantWaPhone", fallback.gerantWaPhone),
             invoiceWaRecipients = jsonArrayToWaRecipients(
                 o.optJSONArray("invoiceWaRecipients"),
                 PosSeeds.DEFAULT_INVOICE_WA_RECIPIENTS

@@ -150,24 +150,6 @@ fun ProductPhotoLightboxDialog(
     onCheckDepotDispo: () -> Unit,
     onOpenCalculator: (() -> Unit)? = null
 ) {
-    val isLow = product.stock in 1..5
-    val isOut = product.stock <= 0
-    val stockBg = when {
-        isOut -> Rose950
-        isLow -> com.example.ui.theme.Amber950
-        else -> Emerald950
-    }
-    val stockFg = when {
-        isOut -> Rose400
-        isLow -> com.example.ui.theme.Amber300
-        else -> Emerald300
-    }
-    val stockLabel = when {
-        isOut -> "Rupture de stock (0 ctn)"
-        isLow -> "Stock critique : ${product.stock} ctn (${formatM2(product.stock * product.m2Carton)} m²)"
-        else -> "En stock : ${product.stock} ctn (${formatM2(product.stock * product.m2Carton)} m²)"
-    }
-
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -195,13 +177,13 @@ fun ProductPhotoLightboxDialog(
                         Text(
                             text = product.name,
                             style = MaterialTheme.typography.titleLarge,
-                            color = Navy950,
+                            color = Slate100,
                             fontWeight = FontWeight.Black
                         )
                         Text(
                             text = "${product.usine} • ${product.dimension} • ${product.finition.uppercase()} • ${product.choix}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Cyan500,
+                            color = Cyan300,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -224,28 +206,32 @@ fun ProductPhotoLightboxDialog(
                 ) {
                     Surface(
                         shape = RoundedCornerShape(10.dp),
-                        color = stockBg,
-                        border = BorderStroke(1.dp, stockFg.copy(alpha = 0.5f))
+                        color = Slate950,
+                        border = BorderStroke(1.dp, Cyan500.copy(alpha = 0.45f))
                     ) {
                         Text(
-                            text = stockLabel,
+                            text = "${product.finition.replaceFirstChar { it.uppercase() }} • ${product.choix}",
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                             style = MaterialTheme.typography.labelMedium,
-                            color = stockFg,
+                            color = Cyan300,
                             fontWeight = FontWeight.Black
                         )
                     }
 
                     Surface(
                         shape = RoundedCornerShape(10.dp),
-                        color = Cyan950,
-                        border = BorderStroke(1.dp, Cyan500.copy(alpha = 0.5f))
+                        color = Emerald950,
+                        border = BorderStroke(1.dp, Emerald500.copy(alpha = 0.5f))
                     ) {
                         Text(
-                            text = "${formatDa(product.prix)} / m²",
+                            text = if (product.isSoldByPiece && product.prixPiece > 0.0) {
+                                "${formatDa(product.prixPiece)} / pc"
+                            } else {
+                                "${formatDa(product.prix)} / m²"
+                            },
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                             style = MaterialTheme.typography.labelLarge,
-                            color = Cyan300,
+                            color = Emerald300,
                             fontWeight = FontWeight.Black
                         )
                     }

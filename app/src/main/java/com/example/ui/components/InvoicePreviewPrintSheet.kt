@@ -129,6 +129,9 @@ fun InvoicePreviewPrintSheet(
     }
 
     val soleWaTarget = PosSeeds.WHATSAPP_MANAGEMENT
+    val gerantDigits = remember(storeInfo.gerantWaPhone) {
+        toDzWhatsAppDigits(storeInfo.gerantWaPhone)?.takeIf { it != soleWaTarget }
+    }
 
     LaunchedEffect(invoice.id, format, hideBain, hidePrices) {
         val (pdf, png) = withContext(Dispatchers.IO) {
@@ -181,7 +184,7 @@ fun InvoicePreviewPrintSheet(
         }
     }
 
-    fun dispatchInvoicePhotoAndPdfWhatsApp() {
+    fun dispatchInvoicePhotoAndPdfWhatsApp(targetPhone213: String) {
         val png = savedPngFile ?: InvoicePdfGenerator.generateAndSaveInvoicePhotoPng(
             context = context,
             invoice = effectiveInvoice,
@@ -201,7 +204,7 @@ fun InvoicePreviewPrintSheet(
             context = context,
             pngFile = png,
             pdfFile = pdf,
-            phone213 = soleWaTarget,
+            phone213 = targetPhone213,
             message = "",
             invoiceRef = effectiveInvoice.reference
         )
@@ -246,7 +249,7 @@ fun InvoicePreviewPrintSheet(
                         Text(
                             text = "Facture #${invoice.reference}",
                             style = MaterialTheme.typography.titleLarge,
-                            color = Navy950,
+                            color = Slate100,
                             fontWeight = FontWeight.Black
                         )
                         Text(
@@ -305,7 +308,7 @@ fun InvoicePreviewPrintSheet(
                     }
 
                     Button(
-                        onClick = { dispatchInvoicePhotoAndPdfWhatsApp() },
+                        onClick = { dispatchInvoicePhotoAndPdfWhatsApp(soleWaTarget) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(48.dp)
@@ -319,10 +322,30 @@ fun InvoicePreviewPrintSheet(
                         Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Photo + PDF → WhatsApp 0676754124",
+                            text = "Photo + PDF → Principal (0676754124)",
                             fontWeight = FontWeight.Black,
                             style = MaterialTheme.typography.labelLarge
                         )
+                    }
+                    if (gerantDigits != null) {
+                        OutlinedButton(
+                            onClick = { dispatchInvoicePhotoAndPdfWhatsApp(gerantDigits) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("invoice_wa_gerant_photo_btn"),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.5.dp, Cyan400)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, tint = Cyan400, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Photo + PDF → Gérant (${storeInfo.gerantWaPhone})",
+                                color = Cyan400,
+                                fontWeight = FontWeight.Black,
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
                     }
                 }
             }
@@ -399,7 +422,7 @@ fun InvoicePreviewPrintSheet(
                         )
                     }
                     if (canHideInvoicePrices) {
-                        HorizontalDivider(color = Color(0xFFE2E8F0))
+                        HorizontalDivider(color = Slate700)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,

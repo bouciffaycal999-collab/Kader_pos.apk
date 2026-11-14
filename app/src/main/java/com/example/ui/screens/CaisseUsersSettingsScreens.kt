@@ -900,23 +900,11 @@ fun UsersScreen(
 fun SettingsScreen(
     storeInfo: StoreInfo,
     settings: AppSettings,
-    autoEmailPdf: Boolean,
     autoWhatsappPhoto: Boolean = true,
-    firebaseUserEmail: String?,
-    isCloudSynced: Boolean,
-    cloudSyncError: String?,
-    onSignInGoogle: suspend () -> String?,
-    onSignOutGoogle: () -> Unit,
-    isNetworkAvailable: Boolean = true,
-    isSyncingCloud: Boolean = false,
-    pendingCloudWrites: Int = 0,
-    onRetryCloudSync: () -> Unit = {},
-    depotWatchEnabled: Boolean = true,
-    onToggleDepotWatch: (Boolean) -> Unit = {},
-    onSendTestNotification: () -> Unit = {},
+    isAdmin: Boolean = true,
+    onChangeAdminPin: (String) -> Boolean = { true },
     onSaveStoreInfo: (StoreInfo) -> Unit,
     onSaveSettings: (AppSettings) -> Unit,
-    onSetAutoEmailPdf: (Boolean) -> Unit,
     onSetAutoWhatsappPhoto: (Boolean) -> Unit = {},
     onResetCatalog: () -> Unit,
     onExportJson: ((String) -> Unit) -> Unit,
@@ -924,34 +912,24 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    var pendingTestAfterGrant by remember { mutableStateOf(false) }
-    val notifPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            onToggleDepotWatch(true)
-            if (pendingTestAfterGrant) {
-                onSendTestNotification()
-            }
-        }
-        pendingTestAfterGrant = false
-    }
     var nom by remember(storeInfo) { mutableStateOf(storeInfo.nom) }
     var adresse by remember(storeInfo) { mutableStateOf(storeInfo.adresse) }
-    var tel by remember(storeInfo) { mutableStateOf(storeInfo.tel) }
-    var tel2 by remember(storeInfo) { mutableStateOf(storeInfo.tel2) }
+    var tel by remember(storeInfo) { mutableStateOf(storeInfo.tel.ifBlank { "0676754124" }) }
+    var tel2 by remember(storeInfo) { mutableStateOf(storeInfo.tel2.ifBlank { "0676754124" }) }
+    var gerantWaPhone by remember(storeInfo) { mutableStateOf(storeInfo.gerantWaPhone) }
     var deviceSellerName by remember(settings) { mutableStateOf(settings.deviceSellerName) }
     var deviceSellerPhone by remember(settings) { mutableStateOf(settings.deviceSellerPhone) }
     var invoiceRecipients by remember(storeInfo) { mutableStateOf(storeInfo.invoiceWaRecipients) }
     var dispoRecipients by remember(storeInfo) { mutableStateOf(storeInfo.dispoWaRecipients) }
+    var newAdminPin by remember { mutableStateOf("") }
+    var confirmAdminPin by remember { mutableStateOf("") }
+    var pinFeedback by remember { mutableStateOf<String?>(null) }
     var logoVersion by remember { mutableIntStateOf(0) }
     val logoBitmap = remember(logoVersion) { InvoicePdfGenerator.loadStoreLogoBitmap(context) }
 
     var pendingExportJson by remember { mutableStateOf<String?>(null) }
     var isSharingApk by remember { mutableStateOf(false) }
     var shareApkError by remember { mutableStateOf<String?>(null) }
-    var isConnectingCloud by remember { mutableStateOf(false) }
-    var cloudSignInError by remember { mutableStateOf<String?>(null) }
 
     val logoPickerLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
@@ -983,11 +961,165 @@ fun SettingsScreen(
         Surface(color = Navy950) {
             Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
                 Text("Paramètres CERAMICA", style = MaterialTheme.typography.titleLarge, color = OnDark, fontWeight = FontWeight.Black)
-                Text("Cloud temps réel, logo facture, vendeur de l'appareil et WhatsApp", style = MaterialTheme.typography.bodySmall, color = Amber500, fontWeight = FontWeight.Bold)
+                Text("Code PIN Admin, numéros WhatsApp (Facture & Dépôt) et impression", style = MaterialTheme.typography.bodySmall, color = Amber400, fontWeight = FontWeight.Bold)
             }
         }
 
         Column(modifier = Modifier.padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (isAdmin) {
+                // Code PIN Administrateur (Modifiable à tout moment)
+                ElevatedCard(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.elevatedCardColors(containerColor = Slate900),
+                    elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Default.Lock, contentDescription = null, tint = Amber400, modifier = Modifier.size(20.dp))
+                            Text("Code PIN Administrateur (Défaut : 0408)", style = MaterialTheme.typography.titleMedium, color = Amber400, fontWeight = FontWeight.Black)
+                        }
+                        Text(
+                            "Le Vendeur accède sans code PIN. L'Administrateur utilise ce code PIN pour voir les prix d'achat, fournisseurs, caisse et réglages.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Slate400
+                        )
+                        ClearableOutlinedTextField(
+                            value = newAdminPin,
+                            onValueChange = { raw -> newAdminPin = raw.filter { it.isDigit() }.take(4) },
+                            label = { Text("Nouveau PIN (4 chiffres)") },
+                            modifier = Modifier.fillMaxWidth().testTag("settings_new_pin_input")
+                        )
+                        ClearableOutlinedTextField(
+                            value = confirmAdminPin,
+                            onValueChange = { raw -> confirmAdminPin = raw.filter { it.isDigit() }.take(4) },
+                            label = { Text("Confirmer le nouveau PIN") },
+                            modifier = Modifier.fillMaxWidth().testTag("settings_confirm_pin_input")
+                        )
+                        if (pinFeedback != null) {
+                            Text(
+                                text = pinFeedback ?: "",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (pinFeedback?.contains("mis à jour", ignoreCase = true) == true) Emerald400 else Rose400,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                when {
+                                    newAdminPin.length != 4 -> pinFeedback = "Entrez 4 chiffres pour le nouveau code PIN."
+                                    newAdminPin != confirmAdminPin -> pinFeedback = "Les deux codes PIN ne correspondent pas."
+                                    else -> {
+                                        val ok = onChangeAdminPin(newAdminPin)
+                                        if (ok) {
+                                            pinFeedback = "Code PIN mis à jour avec succès ($newAdminPin)."
+                                            newAdminPin = ""
+                                            confirmAdminPin = ""
+                                        }
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().height(48.dp).testTag("settings_save_pin_btn"),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Amber500, contentColor = OnDark)
+                        ) {
+                            Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Changer le Code PIN Admin", fontWeight = FontWeight.Black)
+                        }
+                    }
+                }
+            }
+
+            // WhatsApp Factures : Principal (0676754124) + 2ème numéro optionnel Gérant
+            ElevatedCard(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = Slate900),
+                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("WhatsApp Factures (Photo PNG + PDF)", style = MaterialTheme.typography.titleMedium, color = Amber400, fontWeight = FontWeight.Black)
+                    Text(
+                        "Envoi immédiat après vente vers le numéro principal (0676754124) + un deuxième numéro Gérant optionnel si souhaité.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Slate400
+                    )
+                    ClearableOutlinedTextField(
+                        value = tel,
+                        onValueChange = { tel = it },
+                        label = { Text("WhatsApp Admin Principal (0676754124)") },
+                        modifier = Modifier.fillMaxWidth().testTag("settings_wa_principal_input")
+                    )
+                    ClearableOutlinedTextField(
+                        value = gerantWaPhone,
+                        onValueChange = { gerantWaPhone = it },
+                        label = { Text("2ème Numéro WhatsApp Gérant (Optionnel)") },
+                        modifier = Modifier.fillMaxWidth().testTag("settings_wa_gerant_input")
+                    )
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Envoyer Photo + PDF WhatsApp auto après vente", color = Slate100, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            Text("Ouvre WhatsApp automatiquement avec l'image et le PDF vers 0676754124 après validation", color = Slate400, style = MaterialTheme.typography.labelSmall)
+                        }
+                        Switch(
+                            checked = autoWhatsappPhoto,
+                            onCheckedChange = onSetAutoWhatsappPhoto,
+                            modifier = Modifier.testTag("settings_auto_wa_photo_switch")
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            val cleanMain = tel.trim().ifBlank { "0676754124" }
+                            val cleanGerant = gerantWaPhone.trim()
+                            val nextInvoiceList = buildList {
+                                add(WaRecipient("Principal / Admin ($cleanMain)", cleanMain))
+                                if (cleanGerant.isNotBlank() && cleanGerant != cleanMain) {
+                                    add(WaRecipient("Gérant ($cleanGerant)", cleanGerant))
+                                }
+                            }
+                            invoiceRecipients = nextInvoiceList
+                            onSaveStoreInfo(
+                                storeInfo.copy(
+                                    nom = nom.trim().ifBlank { storeInfo.nom },
+                                    adresse = adresse.trim().ifBlank { storeInfo.adresse },
+                                    tel = cleanMain,
+                                    tel2 = tel2.trim().ifBlank { cleanMain },
+                                    email = "",
+                                    gerantWaPhone = cleanGerant,
+                                    invoiceWaRecipients = nextInvoiceList,
+                                    dispoWaRecipients = dispoRecipients
+                                )
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth().height(50.dp).testTag("settings_save_wa_invoice_btn"),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Emerald500, contentColor = OnDark)
+                    ) {
+                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Enregistrer Numéros Factures", fontWeight = FontWeight.Black)
+                    }
+                }
+            }
+
+            // Numéros WhatsApp Dispo Dépôt (Principal 0676754124 + multiples contacts manuels)
+            WaRecipientsEditorCard(
+                title = "WhatsApp Demande Dispo Dépôt",
+                subtitle = "Principal : 0676754124. Ajoutez ici manuellement tous les numéros de dépôt pour envoyer une demande de disponibilité.",
+                recipients = dispoRecipients,
+                onUpdateRecipients = { dispoRecipients = it },
+                onSaveAll = {
+                    val safeList = if (dispoRecipients.any { it.phone.contains("0676754124") }) {
+                        dispoRecipients
+                    } else {
+                        listOf(WaRecipient("Principal / Admin (0676754124)", "0676754124")) + dispoRecipients
+                    }
+                    dispoRecipients = safeList
+                    onSaveStoreInfo(storeInfo.copy(invoiceWaRecipients = invoiceRecipients, dispoWaRecipients = safeList, gerantWaPhone = gerantWaPhone.trim()))
+                },
+                accentColor = Cyan400,
+                testTagPrefix = "wa_dispo"
+            )
+
             // Logo Magasin sur Facture (Photo Picker zero-permission)
             ElevatedCard(
                 shape = RoundedCornerShape(16.dp),
@@ -995,7 +1127,7 @@ fun SettingsScreen(
                 elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
             ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Logo sur Facture & Bon de Livraison", style = MaterialTheme.typography.titleMedium, color = Navy950, fontWeight = FontWeight.Black)
+                    Text("Logo sur Facture & Bon de Livraison", style = MaterialTheme.typography.titleMedium, color = Cyan400, fontWeight = FontWeight.Black)
                     if (logoBitmap != null) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -1103,288 +1235,6 @@ fun SettingsScreen(
                 }
             }
 
-            // Destinataires WhatsApp Factures (Obligatoire avant impression) & Dispo Dépôt
-            WaRecipientsEditorCard(
-                title = "WhatsApp Factures (0676754124)",
-                subtitle = "Chaque facture générée en Photo + PDF est envoyée automatiquement sur WhatsApp 0676754124 avant impression.",
-                recipients = invoiceRecipients,
-                onUpdateRecipients = { invoiceRecipients = it },
-                onSaveAll = {
-                    onSaveStoreInfo(storeInfo.copy(invoiceWaRecipients = invoiceRecipients, dispoWaRecipients = dispoRecipients))
-                },
-                accentColor = Amber500,
-                testTagPrefix = "wa_invoice"
-            )
-
-            WaRecipientsEditorCard(
-                title = "WhatsApp Dispo Dépôt (0676754124)",
-                subtitle = "Contact utilisé lorsque le vendeur vérifie la disponibilité d'un modèle.",
-                recipients = dispoRecipients,
-                onUpdateRecipients = { dispoRecipients = it },
-                onSaveAll = {
-                    onSaveStoreInfo(storeInfo.copy(invoiceWaRecipients = invoiceRecipients, dispoWaRecipients = dispoRecipients))
-                },
-                accentColor = Cyan500,
-                testTagPrefix = "wa_dispo"
-            )
-
-            // WhatsApp Only Bureau Settings (No Gmail)
-            ElevatedCard(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.elevatedCardColors(containerColor = Slate900),
-                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
-            ) {
-                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Envoi WhatsApp Bureau (0676754124)", style = MaterialTheme.typography.titleMedium, color = Amber400, fontWeight = FontWeight.Black)
-                    ClearableOutlinedTextField(
-                        value = tel,
-                        onValueChange = { tel = it },
-                        label = { Text("WhatsApp Principal (0676754124)") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    ClearableOutlinedTextField(
-                        value = tel2,
-                        onValueChange = { tel2 = it },
-                        label = { Text("WhatsApp Dépôt (0676754124)") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Envoyer Photo + PDF WhatsApp auto après vente", color = Slate100, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                            Text("Ouvre WhatsApp automatiquement avec la photo PNG et le PDF de la facture vers 0676754124 avant impression", color = Slate400, style = MaterialTheme.typography.labelSmall)
-                        }
-                        Switch(
-                            checked = autoWhatsappPhoto,
-                            onCheckedChange = onSetAutoWhatsappPhoto,
-                            modifier = Modifier.testTag("settings_auto_wa_photo_switch")
-                        )
-                    }
-                    Button(
-                        onClick = {
-                            onSaveStoreInfo(
-                                storeInfo.copy(
-                                    nom = nom.trim().ifBlank { storeInfo.nom },
-                                    adresse = adresse.trim().ifBlank { storeInfo.adresse },
-                                    tel = tel.trim().ifBlank { "0676754124" },
-                                    tel2 = tel2.trim().ifBlank { "0676754124" },
-                                    email = "",
-                                    invoiceWaRecipients = invoiceRecipients,
-                                    dispoWaRecipients = dispoRecipients
-                                )
-                            )
-                        },
-                        modifier = Modifier.fillMaxWidth().height(50.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Emerald500, contentColor = OnDark)
-                    ) {
-                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Enregistrer WhatsApp Bureau", fontWeight = FontWeight.Black)
-                    }
-                }
-            }
-
-            val showCloudHealthy = firebaseUserEmail != null && isNetworkAvailable && isCloudSynced
-            val showCloudOffline = firebaseUserEmail == null || !isNetworkAvailable
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = Slate900,
-                border = BorderStroke(
-                    1.5.dp,
-                    when {
-                        showCloudHealthy -> Emerald500.copy(alpha = 0.65f)
-                        showCloudOffline -> Amber500
-                        else -> Slate800
-                    }
-                )
-            ) {
-                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = if (showCloudOffline) Icons.Default.CloudOff else Icons.Default.CloudDone,
-                            contentDescription = null,
-                            tint = if (showCloudHealthy) Emerald400 else Amber400,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = when {
-                                firebaseUserEmail == null -> "Mode Hors-Ligne Local"
-                                !isNetworkAvailable -> "Cloud en Attente (Hors-Ligne)"
-                                else -> "Base Cloud Partagée Temps Réel"
-                            },
-                            style = MaterialTheme.typography.titleMedium,
-                            color = if (showCloudHealthy) Cyan400 else Amber400,
-                            fontWeight = FontWeight.Black
-                        )
-                    }
-                    if (firebaseUserEmail == null) {
-                        Text(
-                            text = "Toutes les données (stock, ventes, factures PDF, caisse, clients) sont enregistrées localement sur cet appareil sans internet.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Slate100,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        if (!isNetworkAvailable) {
-                            Text(
-                                text = "Pas de connexion Internet détectée actuellement.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Amber400,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        if (cloudSignInError != null) {
-                            Text(
-                                text = cloudSignInError ?: "",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Rose400,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Button(
-                            onClick = {
-                                if (isConnectingCloud) return@Button
-                                isConnectingCloud = true
-                                cloudSignInError = null
-                                coroutineScope.launch {
-                                    val err = onSignInGoogle()
-                                    if (err != null) {
-                                        cloudSignInError = err
-                                    }
-                                    isConnectingCloud = false
-                                }
-                            },
-                            enabled = !isConnectingCloud,
-                            modifier = Modifier.fillMaxWidth().height(50.dp).testTag("settings_google_signin_btn"),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Cyan500, contentColor = OnDark)
-                        ) {
-                            if (isConnectingCloud) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = OnDark)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Connexion Google Cloud...", fontWeight = FontWeight.Black)
-                            } else {
-                                Icon(Icons.Default.Login, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Connecter Google Cloud (Passer en Ligne)", fontWeight = FontWeight.Black)
-                            }
-                        }
-                    } else {
-                        Text(
-                            text = firebaseUserEmail,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Slate100,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = if (isNetworkAvailable) {
-                                "Réseau Internet actif"
-                            } else {
-                                "Pas de connexion Internet — modifications en file locale"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (isNetworkAvailable) Emerald400 else Amber400,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = when {
-                                !isNetworkAvailable -> "Reconnexion et envoi automatique dès le retour d'internet."
-                                isSyncingCloud -> "Synchronisation Cloud Firestore en cours..."
-                                cloudSyncError != null -> "Synchronisation : $cloudSyncError"
-                                isCloudSynced -> "Cloud Firestore synchronisé en temps réel (multi-villes actif)"
-                                else -> "Connexion au Cloud Firestore..."
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = when {
-                                !isNetworkAvailable || cloudSyncError != null -> Amber400
-                                isSyncingCloud -> Cyan400
-                                isCloudSynced -> Emerald400
-                                else -> Slate400
-                            },
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        if (pendingCloudWrites > 0) {
-                            Text(
-                                text = "$pendingCloudWrites écriture(s) Cloud en cours / file d'attente...",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = Amber400,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Button(
-                            onClick = onRetryCloudSync,
-                            enabled = isNetworkAvailable,
-                            modifier = Modifier.fillMaxWidth().height(48.dp).testTag("settings_cloud_sync_btn"),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Cyan500, contentColor = OnDark)
-                        ) {
-                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Synchroniser Cloud maintenant", fontWeight = FontWeight.Black)
-                        }
-                        OutlinedButton(
-                            onClick = onSignOutGoogle,
-                            modifier = Modifier.fillMaxWidth().height(48.dp).testTag("google_sign_out_btn"),
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.5.dp, Rose500)
-                        ) {
-                            Icon(Icons.Default.Lock, contentDescription = null, tint = Rose400, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Déconnecter le compte Google", color = Rose400, fontWeight = FontWeight.Black)
-                        }
-                        HorizontalDivider(color = Slate800)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "Alertes Ventes Hors-App (Dépôt)",
-                                    color = Slate100,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Black
-                                )
-                                Text(
-                                    "Notifie l'Admin dans la barre Android dès qu'un vendeur valide une vente même si l'application est fermée ou en arrière-plan.",
-                                    color = Slate400,
-                                    style = MaterialTheme.typography.labelSmall
-                                )
-                            }
-                            Switch(
-                                checked = depotWatchEnabled,
-                                onCheckedChange = { checked ->
-                                    if (checked && Build.VERSION.SDK_INT >= 33 && !SaleSystemNotifier.hasNotificationPermission(context)) {
-                                        pendingTestAfterGrant = false
-                                        notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                    } else {
-                                        onToggleDepotWatch(checked)
-                                    }
-                                },
-                                modifier = Modifier.testTag("settings_depot_watch_switch")
-                            )
-                        }
-                        OutlinedButton(
-                            onClick = {
-                                if (Build.VERSION.SDK_INT >= 33 && !SaleSystemNotifier.hasNotificationPermission(context)) {
-                                    pendingTestAfterGrant = true
-                                    notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                } else {
-                                    onSendTestNotification()
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth().height(48.dp).testTag("test_out_of_app_notif_btn"),
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.5.dp, Emerald500)
-                        ) {
-                            Icon(Icons.Default.Notifications, contentDescription = null, tint = Emerald400, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Tester Notification Hors-App", color = Emerald400, fontWeight = FontWeight.Black)
-                        }
-                    }
-                }
-            }
-
             Surface(shape = RoundedCornerShape(16.dp), color = Slate900, border = BorderStroke(1.5.dp, Slate800)) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Site Actif & Impression", style = MaterialTheme.typography.titleMedium, color = Cyan400, fontWeight = FontWeight.Black)
@@ -1410,7 +1260,7 @@ fun SettingsScreen(
 
             Surface(shape = RoundedCornerShape(16.dp), color = Slate900, border = BorderStroke(1.5.dp, Slate800)) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Identité Magasin (Factures)", style = MaterialTheme.typography.titleMedium, color = Navy950, fontWeight = FontWeight.Black)
+                    Text("Identité Magasin (Factures)", style = MaterialTheme.typography.titleMedium, color = Slate100, fontWeight = FontWeight.Black)
                     ClearableOutlinedTextField(value = nom, onValueChange = { nom = it }, label = { Text("Nom commercial") }, modifier = Modifier.fillMaxWidth())
                     ClearableOutlinedTextField(value = adresse, onValueChange = { adresse = it }, label = { Text("Adresse") }, modifier = Modifier.fillMaxWidth())
                     Button(
@@ -1421,7 +1271,8 @@ fun SettingsScreen(
                                     adresse = adresse.trim(),
                                     tel = tel.trim().ifBlank { "0676754124" },
                                     tel2 = tel2.trim().ifBlank { "0676754124" },
-                                    email = ""
+                                    email = "",
+                                    gerantWaPhone = gerantWaPhone.trim()
                                 )
                             )
                         },
@@ -1732,7 +1583,7 @@ fun NotificationsSheet(
                         Icon(Icons.Default.Notifications, contentDescription = null, tint = Amber500, modifier = Modifier.size(24.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
-                            Text("Alertes Direction & Dépôt (${filtered.size})", style = MaterialTheme.typography.titleMedium, color = Navy950, fontWeight = FontWeight.Black)
+                            Text("Alertes Direction & Dépôt (${filtered.size})", style = MaterialTheme.typography.titleMedium, color = Slate100, fontWeight = FontWeight.Black)
                             Text("Ventes • Modifs Factures • Stock • Dispo", style = MaterialTheme.typography.labelSmall, color = Cyan400, fontWeight = FontWeight.Bold)
                         }
                     }

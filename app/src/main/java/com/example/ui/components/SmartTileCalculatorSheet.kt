@@ -11,13 +11,12 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -30,6 +29,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddBusiness
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
@@ -88,16 +89,17 @@ import com.example.ui.theme.Emerald950
 import com.example.ui.theme.Navy800
 import com.example.ui.theme.Navy950
 import com.example.ui.theme.OnDark
+import com.example.ui.theme.PosNumericTextStyle
 import com.example.ui.theme.Rose400
 import com.example.ui.theme.Rose500
 import com.example.ui.theme.Rose950
 import com.example.ui.theme.Slate100
 import com.example.ui.theme.Slate400
 import com.example.ui.theme.Slate700
+import com.example.ui.theme.Slate800
 import com.example.ui.theme.Slate850
 import com.example.ui.theme.Slate900
 import com.example.ui.theme.Slate950
-import com.example.ui.theme.PosNumericTextStyle
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.util.Locale
@@ -403,7 +405,7 @@ fun SmartTileCalculatorSheet(
                 prix = prixVal,
                 prixAchat = product?.prixAchat ?: 0.0,
                 stock = 0,
-                color = product?.color ?: "#F97316",
+                color = product?.color ?: "#D97706",
                 colorName = product?.colorName ?: "Cuivre",
                 image = product?.image ?: ""
             )
@@ -462,20 +464,21 @@ fun SmartTileCalculatorSheet(
                 .widthIn(max = 640.dp)
                 .align(Alignment.CenterHorizontally)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 14.dp)
+                .padding(horizontal = 14.dp, vertical = 12.dp)
                 .testTag("smart_tile_calculator_sheet"),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Navy Header Banner + Big Red Exit Button
+            // 1. Sleek Product Header (Zero Stock Clutter)
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
-                color = Navy950
+                color = Navy950,
+                border = BorderStroke(1.dp, Navy800)
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -488,14 +491,13 @@ fun SmartTileCalculatorSheet(
                                 imageUrl = product.image,
                                 colorHex = product.color,
                                 contentDescription = product.name,
-                                modifier = Modifier.size(48.dp),
-                                cornerRadius = 12.dp
+                                modifier = Modifier.size(44.dp),
+                                cornerRadius = 11.dp
                             )
-                            Spacer(modifier = Modifier.width(10.dp))
                         } else {
                             Surface(
-                                modifier = Modifier.size(46.dp),
-                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.size(44.dp),
+                                shape = RoundedCornerShape(11.dp),
                                 color = if (isOneTimeProduct) Amber500 else Cyan500
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
@@ -506,50 +508,39 @@ fun SmartTileCalculatorSheet(
                                     )
                                 }
                             }
-                            Spacer(modifier = Modifier.width(10.dp))
                         }
+                        Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
                                 text = when {
                                     isOneTimeProduct && editingCartItem != null -> "Modifier Vente Unique"
-                                    isOneTimeProduct -> "Produit 1× (Calc Intégré)"
+                                    isOneTimeProduct -> "Produit 1×"
                                     product != null -> product.name
                                     editingCartItem != null -> editingCartItem.name
-                                    else -> "Calculateur m² / Cartons"
+                                    else -> "Calculer & Ajouter"
                                 },
                                 style = MaterialTheme.typography.titleMedium,
-                                color = OnDark,
+                                color = Slate100,
                                 fontWeight = FontWeight.Black,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                             val subtitle = when {
-                                isOneTimeProduct -> "Prix & m²/carton configurables"
-                                product != null -> "${product.usine} • ${product.dimension} • ${formatM2(m2PerCartonVal)} m²/ctn"
+                                isOneTimeProduct -> "Format & prix libres"
+                                product != null -> "${product.usine} • ${product.dimension} • ${product.finition.replaceFirstChar { it.uppercase() }}"
                                 editingCartItem != null -> "${editingCartItem.usine} • ${formatM2(m2PerCartonVal)} m²/ctn"
-                                else -> "Surface ↔ Cartons & Pièces"
+                                else -> "Surface ↔ Cartons"
                             }
                             Text(
-                                text = subtitle,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Amber500,
+                                text = subtitle + if (allowCostView && product != null && product.prixAchat > 0.0) {
+                                    " • Ach: ${formatDa(product.prixAchat)}"
+                                } else "",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Cyan300,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            if (isCatalogBound && product != null) {
-                                val unitBadge = if (product.isSoldByPiece) {
-                                    val pTxt = if (product.prixPiece > 0.0) "${formatDa(product.prixPiece)}/pc" else "Vente à la pièce"
-                                    " • $pTxt"
-                                } else ""
-                                val costTag = if (allowCostView && product.prixAchat > 0.0) " • Achat: ${formatDa(product.prixAchat)}" else ""
-                                Text(
-                                    text = (if (product.stock > 0) "En stock: ${product.stock} ctn" else "Stock: ${product.stock} ctn (Vente libre)") + unitBadge + costTag,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (product.stock > 0) Emerald500 else Amber400,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
                         }
                     }
 
@@ -559,72 +550,197 @@ fun SmartTileCalculatorSheet(
                         onClick = onDismiss,
                         colors = ButtonDefaults.buttonColors(containerColor = Rose500, contentColor = OnDark),
                         shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp),
                         modifier = Modifier
-                            .height(48.dp)
+                            .height(44.dp)
                             .testTag("calc_close_btn")
                     ) {
                         Icon(Icons.Default.Close, contentDescription = "Fermer", modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("FERMER", fontWeight = FontWeight.Black)
+                        Text("FERMER", fontWeight = FontWeight.Black, style = MaterialTheme.typography.labelLarge)
                     }
                 }
             }
 
-            // Custom Name input for One-Time Sale or Standalone mode
-            if (isOneTimeProduct || !isCatalogBound) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ClearableOutlinedTextField(
-                        value = customProductName,
-                        onValueChange = { customProductName = it },
-                        label = {
-                            Text(
-                                if (isOneTimeProduct) "Nom du produit (vente unique)"
-                                else "Désignation (optionnel)"
+            // 2. UNMISTAKABLE RESULT HERO CARD AT THE TOP (Pops at a Glance!)
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("calc_result_hero_card"),
+                shape = RoundedCornerShape(18.dp),
+                color = Emerald950,
+                border = BorderStroke(2.dp, Emerald400),
+                shadowElevation = 6.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(Emerald950, Cyan950.copy(alpha = 0.9f))
                             )
-                        },
-                        placeholder = { Text("Ex: Carrelage Marbre Beige 60×60", color = Slate400) },
-                        onDismissKeypad = { showKeypad = false },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("calc_onetime_name_input")
-                    )
-                    if (isOneTimeProduct) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        )
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Box 1: Cartons / Pcs
+                        Surface(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                            color = Slate950.copy(alpha = 0.85f),
+                            border = BorderStroke(1.2.dp, Amber400.copy(alpha = 0.6f))
                         ) {
-                            listOf("Carrelage Sol", "Faïence Mur", "Dalle Rectifiée", "Porcelaine", "Plinthe").forEach { quickName ->
-                                val isSel = customProductName.startsWith(quickName)
-                                FilterChip(
-                                    selected = isSel,
-                                    onClick = {
-                                        focusManager.clearFocus(force = true)
-                                        customProductName = "$quickName ${tileLengthStr}×${tileWidthStr}"
+                            Column(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "CARTONS",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Amber300,
+                                    fontWeight = FontWeight.Black
+                                )
+                                Text(
+                                    text = buildString {
+                                        append("${result.cartons}")
+                                        if (result.loosePieces > 0) append("+${result.loosePieces}p")
                                     },
-                                    label = { Text(quickName, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = Amber500,
-                                        selectedLabelColor = OnDark,
-                                        containerColor = Slate900,
-                                        labelColor = Slate400
-                                    )
+                                    style = PosNumericTextStyle.copy(fontSize = 24.sp),
+                                    color = Amber400,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = "${result.cartons * result.pcsPerCarton + result.loosePieces} pcs",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Slate400,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
+                        }
+
+                        // Box 2: Surface m²
+                        Surface(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                            color = Slate950.copy(alpha = 0.85f),
+                            border = BorderStroke(1.2.dp, Cyan400.copy(alpha = 0.6f))
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "SURFACE",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Cyan300,
+                                    fontWeight = FontWeight.Black
+                                )
+                                Text(
+                                    text = "${formatM2(result.deliveredM2)}",
+                                    style = PosNumericTextStyle.copy(fontSize = 22.sp),
+                                    color = Cyan400,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = "m² livrés",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Slate400,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        // Box 3: Total DA
+                        Surface(
+                            modifier = Modifier.weight(1.35f),
+                            shape = RoundedCornerShape(12.dp),
+                            color = Slate950.copy(alpha = 0.92f),
+                            border = BorderStroke(1.5.dp, Emerald400)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                horizontalAlignment = Alignment.End
+                            ) {
+                                Text(
+                                    text = "TOTAL À PAYER",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Emerald300,
+                                    fontWeight = FontWeight.Black
+                                )
+                                Text(
+                                    text = formatDa(result.totalDa),
+                                    style = PosNumericTextStyle.copy(fontSize = 21.sp),
+                                    color = Emerald400,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "${formatDa(prixVal * result.m2PerCarton)} / ctn",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Slate400,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+
+                    if (mode != CalcInputMode.CARTONS_PIECES && result.surplusM2 > 0.005) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (marginPercent > 0) {
+                                    "Demandé ${formatM2(result.requestedM2)} m² (+$marginPercent%)"
+                                } else {
+                                    "Demandé ${formatM2(result.requestedM2)} m²"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Slate100.copy(alpha = 0.85f),
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Surplus +${formatM2(result.surplusM2)} m²",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Amber300,
+                                fontWeight = FontWeight.Black
+                            )
                         }
                     }
                 }
             }
 
-            // 2 Focused Modes: Surface (m² -> Cartons) and Cartons & Pièces (with piece cost pricing)
+            // Custom Name input for One-Time Sale
+            if (isOneTimeProduct || !isCatalogBound) {
+                ClearableOutlinedTextField(
+                    value = customProductName,
+                    onValueChange = { customProductName = it },
+                    label = {
+                        Text(if (isOneTimeProduct) "Nom du produit (vente unique)" else "Désignation (optionnel)")
+                    },
+                    placeholder = { Text("Ex: Carrelage Marbre Beige 60×60", color = Slate400) },
+                    onDismissKeypad = { showKeypad = false },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("calc_onetime_name_input")
+                )
+            }
+
+            // 3. Clean 2-Mode Toggle
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 CalcModeChip(
                     selected = mode != CalcInputMode.CARTONS_PIECES,
-                    label = "Surface (m²) → Cartons",
+                    label = "Surface (m²)",
                     icon = Icons.Default.SquareFoot,
                     onClick = {
                         mode = CalcInputMode.SURFACE
@@ -647,36 +763,162 @@ fun SmartTileCalculatorSheet(
                 )
             }
 
-            // Colisage m²/carton toggle / builder
-            if (isCatalogBound) {
+            // 4. Crisp Active Input Fields
+            if (mode != CalcInputMode.CARTONS_PIECES) {
+                NumericDisplayField(
+                    label = "Surface demandée par le client",
+                    value = surfaceStr,
+                    isActive = showKeypad && activeField == CalcFieldTarget.SURFACE,
+                    onSelect = { selectNumericField(CalcFieldTarget.SURFACE) },
+                    onClear = { surfaceStr = "" },
+                    suffix = "m²",
+                    accentColor = Amber400,
+                    testTag = "calc_surface_field"
+                )
+                MarginChipsRow(
+                    selectedMargin = marginPercent,
+                    onSelectMargin = {
+                        focusManager.clearFocus(force = true)
+                        keyboardController?.hide()
+                        marginPercent = it
+                    }
+                )
+            } else {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        NumericDisplayField(
+                            label = "Cartons",
+                            value = cartonsStr,
+                            isActive = showKeypad && activeField == CalcFieldTarget.CARTONS,
+                            onSelect = { selectNumericField(CalcFieldTarget.CARTONS) },
+                            onClear = { cartonsStr = "" },
+                            suffix = "ctn",
+                            accentColor = Amber400,
+                            testTag = "calc_cartons_field"
+                        )
+                        StepperRow(
+                            onMinus = {
+                                val c = (cartonsStr.toIntOrNull() ?: 0).minus(1).coerceAtLeast(0)
+                                cartonsStr = c.toString()
+                            },
+                            onPlus = {
+                                val c = (cartonsStr.toIntOrNull() ?: 0) + 1
+                                cartonsStr = c.toString()
+                            }
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        NumericDisplayField(
+                            label = "Pièces",
+                            value = piecesStr,
+                            isActive = showKeypad && activeField == CalcFieldTarget.PIECES,
+                            onSelect = { selectNumericField(CalcFieldTarget.PIECES) },
+                            onClear = { piecesStr = "" },
+                            suffix = "pcs",
+                            accentColor = Cyan400,
+                            testTag = "calc_pieces_field"
+                        )
+                        StepperRow(
+                            onMinus = {
+                                val p = (piecesStr.toIntOrNull() ?: 0).minus(1).coerceAtLeast(0)
+                                piecesStr = p.toString()
+                            },
+                            onPlus = {
+                                val p = (piecesStr.toIntOrNull() ?: 0) + 1
+                                piecesStr = p.toString()
+                            }
+                        )
+                    }
+                }
+            }
+
+            // 5. Price + Optional Spec Strip
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                NumericDisplayField(
+                    label = if (canEditPrice) "Prix / m²" else "Prix / m² (Fixe)",
+                    value = pricePerM2Str,
+                    isActive = canEditPrice && showKeypad && activeField == CalcFieldTarget.PRICE_PER_M2,
+                    onSelect = { if (canEditPrice) selectNumericField(CalcFieldTarget.PRICE_PER_M2) },
+                    onClear = if (canEditPrice) ({ pricePerM2Str = "" }) else null,
+                    enabled = canEditPrice,
+                    suffix = "DA",
+                    accentColor = Emerald400,
+                    modifier = Modifier.weight(1f),
+                    testTag = "calc_price_field"
+                )
+                if (mode == CalcInputMode.CARTONS_PIECES || loosePiecesCount > 0) {
+                    NumericDisplayField(
+                        label = if (canEditPrice) "Prix / Pièce" else "Prix / Pièce (Fixe)",
+                        value = pricePerPieceStr,
+                        isActive = canEditPrice && showKeypad && activeField == CalcFieldTarget.PRICE_PER_PIECE,
+                        onSelect = { if (canEditPrice) selectNumericField(CalcFieldTarget.PRICE_PER_PIECE) },
+                        onClear = if (canEditPrice) ({
+                            hasCustomPiecePrice = true
+                            pricePerPieceStr = ""
+                        }) else null,
+                        enabled = canEditPrice,
+                        suffix = "DA/p",
+                        accentColor = Cyan400,
+                        modifier = Modifier.weight(1f),
+                        testTag = "calc_piece_price_field"
+                    )
+                } else if (isProductCartMode) {
+                    ClearableOutlinedTextField(
+                        value = bainNote,
+                        onValueChange = { bainNote = it },
+                        label = { Text("Bain / Calibre", maxLines = 1) },
+                        onDismissKeypad = { showKeypad = false },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("calc_bain_input")
+                    )
+                }
+            }
+
+            // Collapsible Colisage Bar (compact & unobtrusive)
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { showColisageBuilder = !showColisageBuilder },
+                shape = RoundedCornerShape(12.dp),
+                color = Slate900,
+                border = BorderStroke(1.dp, if (showColisageBuilder) Cyan500.copy(alpha = 0.6f) else Slate800)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 9.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Colisage : ${formatDimNum(m2PerCartonVal)} m²/ctn ($pcsPerCartonVal pcs)",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Slate400,
-                        fontWeight = FontWeight.SemiBold
+                        text = "Colisage : ${formatDimNum(m2PerCartonVal)} m²/ctn • $pcsPerCartonVal pcs/ctn",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Cyan300,
+                        fontWeight = FontWeight.Bold
                     )
-                    FilterChip(
-                        selected = showColisageBuilder,
-                        onClick = { showColisageBuilder = !showColisageBuilder },
-                        label = {
-                            Text(
-                                if (showColisageBuilder) "Masquer m²/ctn" else "Modifier m²/ctn",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                        },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Cyan500,
-                            selectedLabelColor = OnDark,
-                            containerColor = Slate900,
-                            labelColor = Cyan400
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = if (showColisageBuilder) "Masquer" else "Ajuster",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Slate400,
+                            fontWeight = FontWeight.Bold
                         )
-                    )
+                        Icon(
+                            imageVector = if (showColisageBuilder) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = null,
+                            tint = Slate400,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
 
@@ -690,53 +932,6 @@ fun SmartTileCalculatorSheet(
                         modifier = Modifier.padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Colisage Carreau (m² / Carton)",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = Cyan400,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                TileDimensionUnit.entries.forEach { u ->
-                                    val isSel = tileUnit == u
-                                    Surface(
-                                        modifier = Modifier
-                                            .height(34.dp)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .clickable {
-                                                if (tileUnit != u) {
-                                                    val factor = if (u == TileDimensionUnit.METER) 0.01 else 100.0
-                                                    tileLengthStr.toDoubleOrNull()?.let { tileLengthStr = formatDimNum(it * factor) }
-                                                    tileWidthStr.toDoubleOrNull()?.let { tileWidthStr = formatDimNum(it * factor) }
-                                                    tileUnit = u
-                                                    recomputeColisageFromTileDims(unit = u)
-                                                }
-                                            },
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = if (isSel) Cyan500 else Slate850,
-                                        border = BorderStroke(1.dp, if (isSel) Cyan500 else Slate700)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier.padding(horizontal = 10.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                text = u.suffix.uppercase(),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = if (isSel) OnDark else Slate400,
-                                                fontWeight = FontWeight.Black
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -780,24 +975,24 @@ fun SmartTileCalculatorSheet(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             NumericDisplayField(
-                                label = "Long. carreau",
+                                label = "Longueur",
                                 value = tileLengthStr,
                                 isActive = showKeypad && activeField == CalcFieldTarget.TILE_LENGTH,
                                 onSelect = { selectNumericField(CalcFieldTarget.TILE_LENGTH) },
                                 onClear = { tileLengthStr = "" },
                                 suffix = tileUnit.suffix,
-                                accentColor = Cyan500,
+                                accentColor = Cyan400,
                                 modifier = Modifier.weight(1f),
                                 testTag = "calc_tile_len_field"
                             )
                             NumericDisplayField(
-                                label = "Larg. carreau",
+                                label = "Largeur",
                                 value = tileWidthStr,
                                 isActive = showKeypad && activeField == CalcFieldTarget.TILE_WIDTH,
                                 onSelect = { selectNumericField(CalcFieldTarget.TILE_WIDTH) },
                                 onClear = { tileWidthStr = "" },
                                 suffix = tileUnit.suffix,
-                                accentColor = Cyan500,
+                                accentColor = Cyan400,
                                 modifier = Modifier.weight(1f),
                                 testTag = "calc_tile_wid_field"
                             )
@@ -814,7 +1009,7 @@ fun SmartTileCalculatorSheet(
                                 onSelect = { selectNumericField(CalcFieldTarget.PCS_PER_CARTON) },
                                 onClear = { pcsPerCartonStr = "" },
                                 suffix = "pcs",
-                                accentColor = Amber500,
+                                accentColor = Amber400,
                                 modifier = Modifier.weight(1f),
                                 testTag = "calc_pcs_per_carton_field"
                             )
@@ -825,7 +1020,7 @@ fun SmartTileCalculatorSheet(
                                 onSelect = { selectNumericField(CalcFieldTarget.COLISAGE_M2) },
                                 onClear = { colisageM2Str = "" },
                                 suffix = "m²",
-                                accentColor = Emerald500,
+                                accentColor = Emerald400,
                                 modifier = Modifier.weight(1f),
                                 testTag = "calc_colisage_field"
                             )
@@ -834,239 +1029,13 @@ fun SmartTileCalculatorSheet(
                         if (singleTileAreaPreview > 0.0) {
                             Text(
                                 text = "1 carreau = ${formatDimNum(singleTileAreaPreview)} m² × $pcsPerCartonVal pcs = ${formatDimNum(m2PerCartonVal)} m²/ctn",
-                                style = MaterialTheme.typography.labelMedium,
+                                style = MaterialTheme.typography.labelSmall,
                                 color = Emerald300,
                                 fontWeight = FontWeight.Bold
                             )
                         }
                     }
                 }
-            }
-
-            // Primary Calculation Inputs
-            if (mode != CalcInputMode.CARTONS_PIECES) {
-                NumericDisplayField(
-                    label = "Surface souhaitée (m²) → propose cartons exacts",
-                    value = surfaceStr,
-                    isActive = showKeypad && activeField == CalcFieldTarget.SURFACE,
-                    onSelect = { selectNumericField(CalcFieldTarget.SURFACE) },
-                    onClear = { surfaceStr = "" },
-                    suffix = "m²",
-                    accentColor = Amber500,
-                    testTag = "calc_surface_field"
-                )
-                MarginChipsRow(
-                    selectedMargin = marginPercent,
-                    onSelectMargin = {
-                        focusManager.clearFocus(force = true)
-                        keyboardController?.hide()
-                        marginPercent = it
-                    }
-                )
-            } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        NumericDisplayField(
-                            label = "Cartons complets",
-                            value = cartonsStr,
-                            isActive = showKeypad && activeField == CalcFieldTarget.CARTONS,
-                            onSelect = { selectNumericField(CalcFieldTarget.CARTONS) },
-                            onClear = { cartonsStr = "" },
-                            suffix = "ctn",
-                            accentColor = Amber500,
-                            testTag = "calc_cartons_field"
-                        )
-                        StepperRow(
-                            onMinus = {
-                                val c = (cartonsStr.toIntOrNull() ?: 0).minus(1).coerceAtLeast(0)
-                                cartonsStr = c.toString()
-                            },
-                            onPlus = {
-                                val c = (cartonsStr.toIntOrNull() ?: 0) + 1
-                                cartonsStr = c.toString()
-                            }
-                        )
-                    }
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        NumericDisplayField(
-                            label = "Pièces (au prix/pièce)",
-                            value = piecesStr,
-                            isActive = showKeypad && activeField == CalcFieldTarget.PIECES,
-                            onSelect = { selectNumericField(CalcFieldTarget.PIECES) },
-                            onClear = { piecesStr = "" },
-                            suffix = "pcs",
-                            accentColor = Cyan500,
-                            testTag = "calc_pieces_field"
-                        )
-                        StepperRow(
-                            onMinus = {
-                                val p = (piecesStr.toIntOrNull() ?: 0).minus(1).coerceAtLeast(0)
-                                piecesStr = p.toString()
-                            },
-                            onPlus = {
-                                val p = (piecesStr.toIntOrNull() ?: 0) + 1
-                                piecesStr = p.toString()
-                            }
-                        )
-                    }
-                }
-            }
-
-            // Live Carton Proposal & Total Hero Card (Deep Navy for ultra-crisp hierarchy)
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(18.dp),
-                color = Navy950,
-                border = BorderStroke(2.dp, Amber500)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Brush.horizontalGradient(listOf(Navy950, Navy800)))
-                        .padding(14.dp)
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = buildString {
-                                        append("Proposition : ${result.cartons} Carton")
-                                        if (result.cartons > 1) append("s")
-                                        if (result.loosePieces > 0) {
-                                            append(" + ${result.loosePieces} Pcs")
-                                        }
-                                    },
-                                    style = PosNumericTextStyle.copy(fontSize = 21.sp),
-                                    color = Amber500
-                                )
-                                Text(
-                                    text = "${formatM2(result.deliveredM2)} m² livrés (${formatM2(result.m2PerCarton)} m²/ctn)",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = OnDark,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = buildString {
-                                        append("${result.cartons * result.pcsPerCarton + result.loosePieces} pièces")
-                                        append(" • ${formatDa(prixVal * result.m2PerCarton)}/ctn")
-                                        if (result.loosePieces > 0 && prixPieceVal > 0.0) {
-                                            append(" • ${result.loosePieces}×${formatDa(prixPieceVal)}/p")
-                                        }
-                                    },
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = OnDark.copy(alpha = 0.85f)
-                                )
-                            }
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text(
-                                    text = "Total Ligne",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = OnDark.copy(alpha = 0.75f)
-                                )
-                                Text(
-                                    text = formatDa(result.totalDa),
-                                    style = PosNumericTextStyle.copy(fontSize = 24.sp),
-                                    color = Emerald500
-                                )
-                            }
-                        }
-
-                        if (mode != CalcInputMode.CARTONS_PIECES && result.surplusM2 > 0.005) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = if (marginPercent > 0) {
-                                        "Besoin: ${formatM2(result.requestedM2)} m² + $marginPercent% = ${formatM2(result.targetM2WithMargin)} m²"
-                                    } else {
-                                        "Besoin: ${formatM2(result.requestedM2)} m²"
-                                    },
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = OnDark.copy(alpha = 0.8f)
-                                )
-                                Text(
-                                    text = "Surplus +${formatM2(result.surplusM2)} m²",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = Amber500,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Editable Price / m² + Piece Cost Pricing (right away!)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                NumericDisplayField(
-                    label = if (canEditPrice) "Prix / m² (Modifiable)" else "Prix / m² (Verrouillé)",
-                    value = pricePerM2Str,
-                    isActive = canEditPrice && showKeypad && activeField == CalcFieldTarget.PRICE_PER_M2,
-                    onSelect = { if (canEditPrice) selectNumericField(CalcFieldTarget.PRICE_PER_M2) },
-                    onClear = if (canEditPrice) ({ pricePerM2Str = "" }) else null,
-                    enabled = canEditPrice,
-                    suffix = "DA",
-                    accentColor = Emerald500,
-                    modifier = Modifier.weight(1f),
-                    testTag = "calc_price_field"
-                )
-                if (mode == CalcInputMode.CARTONS_PIECES || loosePiecesCount > 0) {
-                    NumericDisplayField(
-                        label = if (canEditPrice) "Prix / Pièce (Coût)" else "Prix / Pièce (Verrouillé)",
-                        value = pricePerPieceStr,
-                        isActive = canEditPrice && showKeypad && activeField == CalcFieldTarget.PRICE_PER_PIECE,
-                        onSelect = { if (canEditPrice) selectNumericField(CalcFieldTarget.PRICE_PER_PIECE) },
-                        onClear = if (canEditPrice) ({
-                            hasCustomPiecePrice = true
-                            pricePerPieceStr = ""
-                        }) else null,
-                        enabled = canEditPrice,
-                        suffix = "DA/p",
-                        accentColor = Cyan500,
-                        modifier = Modifier.weight(1f),
-                        testTag = "calc_piece_price_field"
-                    )
-                } else if (isProductCartMode) {
-                    ClearableOutlinedTextField(
-                        value = bainNote,
-                        onValueChange = { bainNote = it },
-                        label = { Text("Bain / Calibre", maxLines = 1) },
-                        onDismissKeypad = { showKeypad = false },
-                        modifier = Modifier
-                            .weight(1.1f)
-                            .testTag("calc_bain_input")
-                    )
-                }
-            }
-
-            if (isProductCartMode && (mode == CalcInputMode.CARTONS_PIECES || loosePiecesCount > 0)) {
-                ClearableOutlinedTextField(
-                    value = bainNote,
-                    onValueChange = { bainNote = it },
-                    label = { Text("Bain / Calibre (Optionnel)", maxLines = 1) },
-                    onDismissKeypad = { showKeypad = false },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("calc_bain_input")
-                )
             }
 
             // Embedded Non-IME Keypad
@@ -1106,16 +1075,15 @@ fun SmartTileCalculatorSheet(
                     },
                     onValidate = { submitCalculation() },
                     validateLabel = when {
-                        editingCartItem != null -> "Mettre à jour"
-                        isOneTimeProduct -> "Ajouter Produit 1×"
-                        isCatalogBound -> "Ajouter (${result.cartons} ctn)"
-                        else -> "Ajouter au Panier"
+                        editingCartItem != null -> "Valider"
+                        isOneTimeProduct -> "Ajouter 1×"
+                        else -> "Ajouter (${result.cartons} ctn)"
                     },
                     accentColor = Amber500
                 )
             }
 
-            // Secondary Action Bar
+            // Bottom Action Bar
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -1160,7 +1128,7 @@ fun SmartTileCalculatorSheet(
                         text = if (editingCartItem != null) {
                             "Valider Modification"
                         } else {
-                            "Ajouter • ${formatDa(result.totalDa)}"
+                            "Ajouter au Panier • ${formatDa(result.totalDa)}"
                         },
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Black,
@@ -1184,12 +1152,12 @@ private fun CalcModeChip(
 ) {
     Surface(
         modifier = modifier
-            .height(48.dp)
+            .height(46.dp)
             .minimumInteractiveComponentSize()
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .testTag(testTag),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(12.dp),
         color = if (selected) Amber500 else Slate900,
         border = BorderStroke(1.5.dp, if (selected) Amber400 else Slate700)
     ) {
@@ -1246,11 +1214,11 @@ private fun MarginChipsRow(
                     .testTag("calc_margin_$margin"),
                 shape = RoundedCornerShape(10.dp),
                 color = if (isSel) Amber950 else Slate900,
-                border = BorderStroke(1.5.dp, if (isSel) Amber500 else Slate700)
+                border = BorderStroke(1.5.dp, if (isSel) Amber400 else Slate700)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Text(
-                        text = if (margin == 0) "Exact 0%" else "+$margin%",
+                        text = if (margin == 0) "0%" else "+$margin%",
                         style = MaterialTheme.typography.labelMedium,
                         color = if (isSel) Amber300 else Slate400,
                         fontWeight = FontWeight.Black

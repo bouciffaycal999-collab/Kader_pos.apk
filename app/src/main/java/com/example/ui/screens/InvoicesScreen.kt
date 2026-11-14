@@ -129,7 +129,7 @@ fun InvoicesScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Historique des Factures", style = MaterialTheme.typography.titleLarge, color = Navy950, fontWeight = FontWeight.Black)
+                    Text("Historique des Factures", style = MaterialTheme.typography.titleLarge, color = Slate100, fontWeight = FontWeight.Black)
                     Surface(shape = RoundedCornerShape(8.dp), color = Cyan950) {
                         Text(
                             text = "${filtered.size}",

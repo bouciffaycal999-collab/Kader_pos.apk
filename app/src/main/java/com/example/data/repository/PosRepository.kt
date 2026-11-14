@@ -159,10 +159,33 @@ class PosRepository(
                 dao.insertProducts(seededProducts.map { it.toEntity() })
             }
         }
-        if (dao.countUsers() == 0) {
+        val existingUsers = dao.getUsersSnapshot()
+        if (existingUsers.isEmpty()) {
             dao.insertUsers(PosSeeds.DEFAULT_USERS.map { it.toEntity() })
+        } else {
+            val allowedIds = setOf("u_vendeur", "u_kader")
+            existingUsers.filter { it.id !in allowedIds }.forEach { legacy ->
+                dao.deleteUserById(legacy.id)
+            }
+            val defaultSeller = PosSeeds.DEFAULT_USERS.first { it.id == "u_vendeur" }
+            dao.upsertUser(defaultSeller.toEntity())
+            val existingAdmin = existingUsers.find { it.id == "u_kader" }
+            val defaultAdmin = PosSeeds.DEFAULT_USERS.first { it.id == "u_kader" }
+            if (existingAdmin == null) {
+                dao.upsertUser(defaultAdmin.toEntity())
+            } else {
+                val resolvedPin = if (existingAdmin.pin == "1234" || existingAdmin.pin.isBlank()) "0408" else existingAdmin.pin
+                dao.upsertUser(
+                    defaultAdmin.copy(
+                        pin = resolvedPin,
+                        phone = existingAdmin.phone.ifBlank { defaultAdmin.phone }
+                    ).toEntity()
+                )
+            }
         }
-        if (dao.countRolePolicies() == 0) {
+        val existingPolicies = dao.getRolePoliciesSnapshot()
+        if (existingPolicies.isEmpty() || existingPolicies.size != PosSeeds.DEFAULT_ROLE_POLICIES.size) {
+            dao.clearRolePolicies()
             dao.insertRolePolicies(PosSeeds.DEFAULT_ROLE_POLICIES.map { it.toEntity() })
         }
         if (dao.countCustomers() == 0) {
@@ -179,7 +202,7 @@ class PosRepository(
                     type = "entree",
                     motif = "Fond de caisse ouverture",
                     montant = 50000.0,
-                    auteur = "Walid"
+                    auteur = "Administrateur"
                 ).toEntity()
             )
         }
@@ -188,6 +211,9 @@ class PosRepository(
         }
         if (dao.getKv(KV_SETTINGS) == null) {
             dao.putKv(AppKvEntity(KV_SETTINGS, PosJsonMapper.settingsToJson(PosSeeds.DEFAULT_SETTINGS)))
+        }
+        if (dao.getKv(KV_CURRENT_USER_ID) == null) {
+            dao.putKv(AppKvEntity(KV_CURRENT_USER_ID, "u_vendeur"))
         }
     }
 
@@ -465,15 +491,6 @@ class PosRepository(
                 if (!item.productId.startsWith("onetime_")) {
                     currentProducts.find { it.id == item.productId }?.let { p ->
                         updatedStocks[p.id] = p.stock
-                        if (p.stock <= 5) {
-                            val alertNotif = buildLowStockAlert(
-                                product = p.toModel(),
-                                actor = invoice.vendeur,
-                                site = invoice.magasin
-                            )
-                            dao.insertNotification(alertNotif.toEntity())
-                            extraNotifications.add(alertNotif)
-                        }
                     }
                 }
             }
@@ -581,15 +598,6 @@ class PosRepository(
             allProdIds.forEach { pid ->
                 currentProducts.find { it.id == pid }?.let { p ->
                     updatedStocks[p.id] = p.stock
-                    if (p.stock <= 5 && ((prevQty[pid] ?: 0) < (nextQty[pid] ?: 0))) {
-                        val alertNotif = buildLowStockAlert(
-                            product = p.toModel(),
-                            actor = editorName,
-                            site = updatedInvoice.magasin
-                        )
-                        dao.insertNotification(alertNotif.toEntity())
-                        extraNotifications.add(alertNotif)
-                    }
                 }
             }
 
@@ -763,7 +771,6 @@ class PosRepository(
         actorName: String,
         site: String
     ): DepotNotification = withContext(Dispatchers.IO) {
-        val m2Stock = (product.stock.coerceAtLeast(0) * product.m2Carton).coerceAtLeast(0.0)
         val notif = DepotNotification(
             id = "notif_${System.currentTimeMillis()}_${shortId()}",
             invoiceId = sanitizeRuleId(product.id, "dispo_${shortId()}"),
@@ -774,9 +781,9 @@ class PosRepository(
             client = "Demande Dispo Dépôt • ${product.usine}".take(120),
             clientTel = "",
             totalNet = product.prix.coerceAtLeast(0.0),
-            m2Total = m2Stock,
-            cartonsTotal = product.stock.coerceAtLeast(0),
-            articlesSummary = "Vérification dépôt demandée par $actorName ($site) pour ${product.name} (${product.dimension}) — Stock actuel: ${product.stock} ctn (${formatM2(m2Stock)} m²)".take(980),
+            m2Total = 0.0,
+            cartonsTotal = 0,
+            articlesSummary = "Vérification disponibilité demandée par $actorName ($site) pour ${product.name} (${product.dimension} • ${product.finition} • ${product.usine})".take(980),
             read = false
         )
         dao.insertNotification(notif.toEntity())

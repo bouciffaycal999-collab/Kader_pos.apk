@@ -115,45 +115,47 @@ fun StockScreen(
     products: List<TileProduct>,
     storeInfo: StoreInfo = PosSeeds.DEFAULT_STORE_INFO,
     canModifyStock: Boolean,
+    canAddProducts: Boolean = true,
     canViewPrixAchat: Boolean = false,
     onAdjustStock: (String, Int) -> Unit,
     onSetStock: (String, Int) -> Unit,
     onSaveProduct: (TileProduct) -> Unit,
     onRequestDepotDispo: (TileProduct) -> Unit
 ) {
-    val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
-    var stockFilter by remember { mutableStateOf("Tous") }
+    var dimFilter by remember { mutableStateOf("Toutes") }
     var usineFilter by remember { mutableStateOf("Toutes") }
+    var finitionFilter by remember { mutableStateOf("Toutes") }
     var isGridView by remember { mutableStateOf(false) }
 
-    var directEditProduct by remember { mutableStateOf<TileProduct?>(null) }
     var ficheProduct by remember { mutableStateOf<TileProduct?>(null) }
     var showNewFiche by remember { mutableStateOf(false) }
     var previewProduct by remember { mutableStateOf<TileProduct?>(null) }
     var dispoTargetProduct by remember { mutableStateOf<TileProduct?>(null) }
 
-    val usines = remember(products) { listOf("Toutes") + products.map { it.usine }.distinct().sorted() }
+    val dimensions = remember(products) {
+        listOf("Toutes") + products.map { it.dimension.trim() }.filter { it.isNotBlank() }.distinct().sorted()
+    }
+    val usines = remember(products) {
+        listOf("Toutes") + products.map { it.usine.trim() }.filter { it.isNotBlank() }.distinct().sorted()
+    }
+    val finitions = remember(products) {
+        listOf("Toutes") + products.map { it.finition.trim() }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }.sortedBy { it.lowercase() }
+    }
 
-    val filtered = remember(products, searchQuery, stockFilter, usineFilter) {
+    val filtered = remember(products, searchQuery, dimFilter, usineFilter, finitionFilter) {
         val q = searchQuery.trim().lowercase()
         products.filter { p ->
-            (q.isEmpty() || p.name.lowercase().contains(q) || p.usine.lowercase().contains(q) || p.dimension.lowercase().contains(q)) &&
-                (usineFilter == "Toutes" || p.usine == usineFilter) &&
-                when (stockFilter) {
-                    "En Stock" -> p.stock > 0
-                    "Ruptures" -> p.stock <= 0
-                    else -> true
-                }
+            (q.isEmpty() || p.name.lowercase().contains(q) || p.usine.lowercase().contains(q) ||
+                p.dimension.lowercase().contains(q) || p.finition.lowercase().contains(q)) &&
+                (dimFilter == "Toutes" || p.dimension.trim() == dimFilter) &&
+                (usineFilter == "Toutes" || p.usine.trim() == usineFilter) &&
+                (finitionFilter == "Toutes" || p.finition.trim().equals(finitionFilter, ignoreCase = true))
         }
     }
 
-    val totalCartons = remember(products) { products.sumOf { it.stock } }
-    val totalM2Stock = remember(products) { products.sumOf { it.stock * it.m2Carton } }
-    val totalRuptures = remember(products) { products.count { it.stock <= 0 } }
-
     Column(modifier = Modifier.fillMaxSize().background(Slate950)) {
-        // Light Porcelain Studio Header + KPI Summary Cards
+        // Dark Velvet Studio Header + 3 Dynamic Filter Strips
         Surface(color = Slate900) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
@@ -166,9 +168,9 @@ fun StockScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Catalogue & Stock",
+                            text = "Catalogue & Stock (${filtered.size})",
                             style = MaterialTheme.typography.titleLarge,
-                            color = Navy950,
+                            color = Slate100,
                             fontWeight = FontWeight.Black
                         )
                         if (!canModifyStock) {
@@ -179,9 +181,13 @@ fun StockScreen(
                                 border = BorderStroke(1.dp, Cyan500.copy(alpha = 0.35f))
                             ) {
                                 Text(
-                                    text = "Lecture seule vendeur • Dispo & Sync actifs",
+                                    text = if (canAddProducts) {
+                                        "Mode Vendeur • Ajout produits actif"
+                                    } else {
+                                        "Consultation catalogue"
+                                    },
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = Cyan400,
+                                    color = Cyan300,
                                     fontWeight = FontWeight.Black,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                 )
@@ -228,24 +234,12 @@ fun StockScreen(
                             }
                         }
 
-                        IconButton(
-                            onClick = {
-                                val ruptures = products.filter { it.stock <= 0 }.take(30)
-                                val msg = buildString {
-                                    appendLine("⚠️ *ÉTAT STOCK À RÉASSORTIR (${ruptures.size})*")
-                                    ruptures.forEach { appendLine("• ${it.name} [${it.usine}] (${it.stock} ctn)") }
-                                }
-                                val targetWa = PosSeeds.WHATSAPP_MANAGEMENT
-                                openWhatsApp(context, targetWa, msg)
-                            }
-                        ) {
-                            Icon(Icons.Default.Share, contentDescription = "Partager ruptures WhatsApp", tint = Emerald500)
-                        }
-
-                        if (canModifyStock) {
+                        if (canAddProducts || canModifyStock) {
                             Button(
                                 onClick = { showNewFiche = true },
-                                modifier = Modifier.height(44.dp),
+                                modifier = Modifier
+                                    .height(44.dp)
+                                    .testTag("stock_add_model_btn"),
                                 shape = RoundedCornerShape(12.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Amber500, contentColor = OnDark),
                                 contentPadding = PaddingValues(horizontal = 12.dp)
@@ -258,73 +252,39 @@ fun StockScreen(
                     }
                 }
 
-                // 3-Pill Architectural Stock KPI Strip
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    StockKpiPill(
-                        label = "Cartons Total",
-                        value = "$totalCartons ctn",
-                        bgColor = Cyan950,
-                        fgColor = Cyan400,
-                        modifier = Modifier.weight(1f)
-                    )
-                    StockKpiPill(
-                        label = "Surface Totale",
-                        value = "${formatM2(totalM2Stock)} m²",
-                        bgColor = Emerald950,
-                        fgColor = Emerald400,
-                        modifier = Modifier.weight(1.1f)
-                    )
-                    StockKpiPill(
-                        label = "Ruptures / 0",
-                        value = "$totalRuptures",
-                        bgColor = if (totalRuptures > 0) Rose950 else Slate950,
-                        fgColor = if (totalRuptures > 0) Rose400 else Slate400,
-                        modifier = Modifier.weight(0.9f)
-                    )
-                }
-
                 ClearableOutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text("Filtrer stock par nom, usine, format...") },
+                    placeholder = { Text("Filtrer par nom, usine, dimension, finition...") },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Cyan400) },
                     modifier = Modifier.fillMaxWidth().testTag("stock_search_input")
                 )
 
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    listOf("Tous", "En Stock", "Ruptures").forEach { f ->
-                        FilterChip(
-                            selected = stockFilter == f,
-                            onClick = { stockFilter = f },
-                            label = { Text(f, fontWeight = FontWeight.Bold) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = Cyan500,
-                                selectedLabelColor = OnDark,
-                                containerColor = Slate950,
-                                labelColor = Slate400
-                            )
-                        )
-                    }
-                    usines.drop(1).forEach { u ->
-                        FilterChip(
-                            selected = usineFilter == u,
-                            onClick = { usineFilter = if (usineFilter == u) "Toutes" else u },
-                            label = { Text(u, fontWeight = FontWeight.Bold) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = Amber500,
-                                selectedLabelColor = OnDark,
-                                containerColor = Slate950,
-                                labelColor = Slate400
-                            )
-                        )
-                    }
-                }
+                StockFilterLine(
+                    title = "Format",
+                    options = dimensions,
+                    selected = dimFilter,
+                    activeColor = Cyan500,
+                    labelColor = Cyan300,
+                    onSelect = { opt -> dimFilter = if (opt != "Toutes" && dimFilter == opt) "Toutes" else opt }
+                )
+                StockFilterLine(
+                    title = "Usine",
+                    options = usines,
+                    selected = usineFilter,
+                    activeColor = Amber500,
+                    labelColor = Amber300,
+                    onSelect = { opt -> usineFilter = if (opt != "Toutes" && usineFilter == opt) "Toutes" else opt }
+                )
+                StockFilterLine(
+                    title = "Finition",
+                    options = finitions,
+                    selected = finitionFilter,
+                    activeColor = Emerald500,
+                    labelColor = Emerald300,
+                    formatOption = { f -> if (f == "Toutes") f else f.replaceFirstChar { it.uppercase() } },
+                    onSelect = { opt -> finitionFilter = if (opt != "Toutes" && finitionFilter.equals(opt, ignoreCase = true)) "Toutes" else opt }
+                )
             }
         }
         HorizontalDivider(color = Slate800)
@@ -360,8 +320,6 @@ fun StockScreen(
                             canModifyStock = canModifyStock,
                             canViewPrixAchat = canViewPrixAchat,
                             onPreviewImage = { previewProduct = p },
-                            onDirectEditStock = { directEditProduct = p },
-                            onAdjustStock = { delta -> onAdjustStock(p.id, delta) },
                             onEditFiche = { ficheProduct = p },
                             onRequestDispo = {
                                 onRequestDepotDispo(p)
@@ -383,8 +341,6 @@ fun StockScreen(
                         canModifyStock = canModifyStock,
                         canViewPrixAchat = canViewPrixAchat,
                         onPreviewImage = { previewProduct = p },
-                        onDirectEditStock = { directEditProduct = p },
-                        onAdjustStock = { delta -> onAdjustStock(p.id, delta) },
                         onEditFiche = { ficheProduct = p },
                         onRequestDispo = {
                             onRequestDepotDispo(p)
@@ -394,17 +350,6 @@ fun StockScreen(
                 }
             }
         }
-    }
-
-    directEditProduct?.let { prod ->
-        DirectStockEditDialog(
-            product = prod,
-            onDismiss = { directEditProduct = null },
-            onConfirm = { newStock ->
-                onSetStock(prod.id, newStock)
-                directEditProduct = null
-            }
-        )
     }
 
     if (showNewFiche || ficheProduct != null) {
@@ -446,34 +391,45 @@ fun StockScreen(
 }
 
 @Composable
-private fun StockKpiPill(
-    label: String,
-    value: String,
-    bgColor: Color,
-    fgColor: Color,
-    modifier: Modifier = Modifier
+private fun StockFilterLine(
+    title: String,
+    options: List<String>,
+    selected: String,
+    activeColor: Color,
+    labelColor: Color,
+    formatOption: (String) -> String = { it },
+    onSelect: (String) -> Unit
 ) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(12.dp),
-        color = bgColor,
-        border = BorderStroke(1.dp, fgColor.copy(alpha = 0.25f))
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = Slate950,
+            border = BorderStroke(1.dp, activeColor.copy(alpha = 0.45f))
+        ) {
             Text(
-                text = label,
+                text = title,
                 style = MaterialTheme.typography.labelSmall,
-                color = Slate400,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                color = labelColor,
+                fontWeight = FontWeight.Black,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
             )
-            Text(
-                text = value,
-                style = PosNumericTextStyle.copy(fontSize = 14.sp),
-                color = fgColor,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+        }
+        options.forEach { opt ->
+            val isSel = if (opt == "Toutes") selected == "Toutes" else selected.equals(opt, ignoreCase = true)
+            FilterChip(
+                selected = isSel,
+                onClick = { onSelect(opt) },
+                label = { Text(formatOption(opt), fontWeight = FontWeight.Bold) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = activeColor,
+                    selectedLabelColor = OnDark,
+                    containerColor = Slate950,
+                    labelColor = Slate400
+                )
             )
         }
     }
@@ -485,24 +441,9 @@ private fun StockGridProductCard(
     canModifyStock: Boolean,
     canViewPrixAchat: Boolean,
     onPreviewImage: () -> Unit,
-    onDirectEditStock: () -> Unit,
-    onAdjustStock: (Int) -> Unit,
     onEditFiche: () -> Unit,
     onRequestDispo: () -> Unit
 ) {
-    val isLow = product.stock in 1..5
-    val isOut = product.stock <= 0
-    val badgeBg = when {
-        isOut -> Rose950
-        isLow -> Amber950
-        else -> Emerald950
-    }
-    val badgeFg = when {
-        isOut -> Rose400
-        isLow -> Amber300
-        else -> Emerald300
-    }
-
     ElevatedCard(
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = Slate900),
@@ -540,18 +481,15 @@ private fun StockGridProductCard(
                         )
                     }
                     Surface(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(6.dp)
-                            .clickable(enabled = canModifyStock, onClick = onDirectEditStock),
+                        modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
                         shape = RoundedCornerShape(8.dp),
-                        color = badgeBg,
-                        border = BorderStroke(1.dp, badgeFg.copy(alpha = 0.5f))
+                        color = Slate950.copy(alpha = 0.92f),
+                        border = BorderStroke(1.dp, Cyan500.copy(alpha = 0.45f))
                     ) {
                         Text(
-                            text = "${product.stock} ctn",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = badgeFg,
+                            text = product.finition.replaceFirstChar { it.uppercase() },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Cyan300,
                             fontWeight = FontWeight.Black,
                             modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                         )
@@ -569,7 +507,7 @@ private fun StockGridProductCard(
                 )
 
                 Text(
-                    text = "${product.usine} • ${formatM2(product.m2Carton)}m² • ${formatM2(product.stock * product.m2Carton)} m²",
+                    text = "${product.usine} • ${formatM2(product.m2Carton)} m²/ctn • ${product.pcs} pcs",
                     style = MaterialTheme.typography.labelSmall,
                     color = Slate400,
                     fontWeight = FontWeight.SemiBold,
@@ -606,7 +544,7 @@ private fun StockGridProductCard(
                     onClick = onRequestDispo,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(42.dp)
+                        .height(44.dp)
                         .testTag("stock_dispo_btn_${product.id}"),
                     shape = RoundedCornerShape(10.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Cyan500, contentColor = OnDark),
@@ -618,50 +556,23 @@ private fun StockGridProductCard(
                 }
 
                 if (canModifyStock) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(40.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(onClick = onEditFiche),
+                        shape = RoundedCornerShape(8.dp),
+                        color = Amber950,
+                        border = BorderStroke(1.dp, Amber500)
                     ) {
-                        listOf(-1, +1).forEach { delta ->
-                            val isPos = delta > 0
-                            Surface(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(38.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable { onAdjustStock(delta) },
-                                shape = RoundedCornerShape(8.dp),
-                                color = if (isPos) Emerald950 else Rose950,
-                                border = BorderStroke(1.dp, if (isPos) Emerald500 else Rose500)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text(
-                                        text = if (isPos) "+1" else "-1",
-                                        color = if (isPos) Emerald300 else Rose400,
-                                        fontWeight = FontWeight.Black,
-                                        style = MaterialTheme.typography.labelLarge
-                                    )
-                                }
-                            }
-                        }
-                        Surface(
-                            modifier = Modifier
-                                .weight(1.1f)
-                                .height(38.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable(onClick = onEditFiche),
-                            shape = RoundedCornerShape(8.dp),
-                            color = Amber950,
-                            border = BorderStroke(1.dp, Amber500)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = "Fiche",
-                                    color = Amber300,
-                                    fontWeight = FontWeight.Black,
-                                    style = MaterialTheme.typography.labelMedium
-                                )
-                            }
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "Modifier Fiche",
+                                color = Amber300,
+                                fontWeight = FontWeight.Black,
+                                style = MaterialTheme.typography.labelMedium
+                            )
                         }
                     }
                 }
@@ -676,24 +587,9 @@ private fun StockListProductCard(
     canModifyStock: Boolean,
     canViewPrixAchat: Boolean,
     onPreviewImage: () -> Unit,
-    onDirectEditStock: () -> Unit,
-    onAdjustStock: (Int) -> Unit,
     onEditFiche: () -> Unit,
     onRequestDispo: () -> Unit
 ) {
-    val isLow = product.stock in 1..5
-    val isOut = product.stock <= 0
-    val badgeBg = when {
-        isOut -> Rose950
-        isLow -> Amber950
-        else -> Emerald950
-    }
-    val badgeFg = when {
-        isOut -> Rose400
-        isLow -> Amber300
-        else -> Emerald300
-    }
-
     ElevatedCard(
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = Slate900),
@@ -751,7 +647,7 @@ private fun StockListProductCard(
                             "${formatDa(product.prix)}/m²"
                         }
                         Text(
-                            text = "${product.usine} • ${formatM2(product.m2Carton)}m²/ctn • $priceStr",
+                            text = "${product.usine} • ${formatM2(product.m2Carton)} m²/ctn (${product.pcs} pcs) • $priceStr",
                             style = MaterialTheme.typography.bodySmall,
                             color = Slate400,
                             fontWeight = FontWeight.SemiBold,
@@ -759,6 +655,19 @@ private fun StockListProductCard(
                             overflow = TextOverflow.Ellipsis
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = Slate850,
+                                border = BorderStroke(1.dp, Cyan500.copy(alpha = 0.35f))
+                            ) {
+                                Text(
+                                    text = product.finition.replaceFirstChar { it.uppercase() },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Cyan300,
+                                    fontWeight = FontWeight.Black,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
                             Surface(
                                 shape = RoundedCornerShape(6.dp),
                                 color = if (product.isSoldByPiece) Cyan950 else Slate850
@@ -785,30 +694,6 @@ private fun StockListProductCard(
                                     )
                                 }
                             }
-                        }
-                    }
-
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = badgeBg,
-                        border = BorderStroke(1.dp, badgeFg.copy(alpha = 0.5f)),
-                        modifier = Modifier.clickable(enabled = canModifyStock, onClick = onDirectEditStock)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            horizontalAlignment = Alignment.End
-                        ) {
-                            Text(
-                                text = "${product.stock} ctn",
-                                style = PosNumericTextStyle.copy(fontSize = 15.sp),
-                                color = badgeFg
-                            )
-                            Text(
-                                text = "${formatM2(product.stock * product.m2Carton)} m²",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Slate400,
-                                fontWeight = FontWeight.Bold
-                            )
                         }
                     }
                 }
@@ -845,132 +730,12 @@ private fun StockListProductCard(
                         }
                     }
                 }
-
-                if (canModifyStock) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        listOf(-10, -1, +1, +10).forEach { delta ->
-                            val isPos = delta > 0
-                            Surface(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(44.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .clickable { onAdjustStock(delta) },
-                                shape = RoundedCornerShape(10.dp),
-                                color = if (isPos) Emerald950 else Rose950,
-                                border = BorderStroke(1.dp, if (isPos) Emerald500 else Rose500)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text(
-                                        text = if (isPos) "+$delta" else "$delta",
-                                        color = if (isPos) Emerald300 else Rose400,
-                                        fontWeight = FontWeight.Black,
-                                        style = MaterialTheme.typography.titleSmall
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
             }
         }
     }
 }
 
-@Composable
-private fun DirectStockEditDialog(
-    product: TileProduct,
-    onDismiss: () -> Unit,
-    onConfirm: (Int) -> Unit
-) {
-    BackHandler { onDismiss() }
-    var stockStr by remember { mutableStateOf(product.stock.toString()) }
-    var isPristine by remember { mutableStateOf(true) }
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .widthIn(max = 480.dp)
-                .padding(14.dp),
-            shape = RoundedCornerShape(22.dp),
-            color = Slate900,
-            border = BorderStroke(2.dp, Navy950)
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Surface(shape = RoundedCornerShape(14.dp), color = Navy950) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(product.name, style = MaterialTheme.typography.titleMedium, color = OnDark, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
-                        Button(
-                            onClick = onDismiss,
-                            modifier = Modifier.height(42.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Rose500, contentColor = OnDark),
-                            contentPadding = PaddingValues(horizontal = 10.dp)
-                        ) {
-                            Text("FERMER", fontWeight = FontWeight.Black)
-                        }
-                    }
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    NumericDisplayField(
-                        label = "Nouveau Stock (Cartons)",
-                        value = stockStr,
-                        isActive = true,
-                        onSelect = {},
-                        onClear = { stockStr = ""; isPristine = false },
-                        suffix = "ctn",
-                        accentColor = Emerald500,
-                        modifier = Modifier.weight(1f),
-                        testTag = "direct_stock_field"
-                    )
-                    OutlinedButton(
-                        onClick = {
-                            val cur = stockStr.toIntOrNull() ?: 0
-                            stockStr = (-cur).toString()
-                            isPristine = false
-                        },
-                        modifier = Modifier.height(54.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(1.5.dp, Rose500)
-                    ) {
-                        Text("± Signe", color = Rose400, fontWeight = FontWeight.Black)
-                    }
-                }
-                NonImeNumericKeypad(
-                    onKeyPress = { key ->
-                        val isNeg = stockStr.startsWith("-")
-                        val absStr = stockStr.removePrefix("-")
-                        val (nextAbs, nextPristine) = applyKeypadInput(absStr, key, false, isPristine)
-                        stockStr = if (isNeg && nextAbs.isNotEmpty() && nextAbs != "0") "-$nextAbs" else nextAbs
-                        isPristine = nextPristine
-                    },
-                    allowDecimal = false,
-                    onValidate = { onConfirm(stockStr.toIntOrNull() ?: 0) },
-                    validateLabel = "Appliquer Stock",
-                    accentColor = Emerald500
-                )
-            }
-        }
-    }
-}
-
-private enum class FicheNumField(val decimal: Boolean) { M2_CTN(true), PCS(false), PRIX(false), PRIX_PIECE(false), PRIX_ACHAT(false), STOCK(false) }
+private enum class FicheNumField(val decimal: Boolean) { M2_CTN(true), PCS(false), PRIX(false), PRIX_PIECE(false), PRIX_ACHAT(false) }
 
 @Composable
 private fun ProductFicheDialog(
@@ -983,6 +748,9 @@ private fun ProductFicheDialog(
     var name by remember { mutableStateOf(initial?.name ?: "") }
     var usine by remember { mutableStateOf(initial?.usine ?: "BCRAM") }
     var dimension by remember { mutableStateOf(initial?.dimension ?: "60×60") }
+    var finition by remember { mutableStateOf(initial?.finition ?: "brillant") }
+    var colorHex by remember { mutableStateOf(initial?.color ?: "#D6D3CD") }
+    var colorName by remember { mutableStateOf(initial?.colorName ?: "Crème") }
     var choix by remember { mutableStateOf(initial?.choix ?: "1er Choix") }
     var pricingUnit by remember { mutableStateOf(initial?.pricingUnit ?: "carton") }
     var m2CtnStr by remember { mutableStateOf(formatM2(initial?.m2Carton ?: 1.44)) }
@@ -990,7 +758,6 @@ private fun ProductFicheDialog(
     var prixStr by remember { mutableStateOf((initial?.prix ?: 1200.0).toInt().toString()) }
     var prixPieceStr by remember { mutableStateOf((initial?.prixPiece ?: 0.0).toInt().toString()) }
     var prixAchatStr by remember { mutableStateOf((initial?.prixAchat ?: 950.0).toInt().toString()) }
-    var stockStr by remember { mutableStateOf((initial?.stock ?: 0).toString()) }
 
     var activeField by remember { mutableStateOf(FicheNumField.PRIX) }
     var showKeypad by remember { mutableStateOf(false) }
@@ -1004,10 +771,11 @@ private fun ProductFicheDialog(
             modifier = Modifier
                 .fillMaxWidth()
                 .widthIn(max = 560.dp)
-                .padding(14.dp),
+                .padding(14.dp)
+                .testTag("product_fiche_dialog"),
             shape = RoundedCornerShape(22.dp),
             color = Slate900,
-            border = BorderStroke(2.dp, Navy950)
+            border = BorderStroke(1.5.dp, Slate700)
         ) {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
@@ -1019,10 +787,16 @@ private fun ProductFicheDialog(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(if (initial == null) "Nouveau Modèle" else "Modifier Modèle", style = MaterialTheme.typography.titleLarge, color = Amber500, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+                        Text(
+                            text = if (initial == null) "Nouveau Modèle" else "Modifier Modèle",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = Amber500,
+                            fontWeight = FontWeight.Black,
+                            modifier = Modifier.weight(1f)
+                        )
                         Button(
                             onClick = onDismiss,
-                            modifier = Modifier.height(44.dp),
+                            modifier = Modifier.height(44.dp).testTag("fiche_close_btn"),
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = Rose500, contentColor = OnDark),
                             contentPadding = PaddingValues(horizontal = 10.dp)
@@ -1039,7 +813,7 @@ private fun ProductFicheDialog(
                     onValueChange = { name = it },
                     label = { Text("Nom du modèle") },
                     onDismissKeypad = { showKeypad = false },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().testTag("fiche_name_input")
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ClearableOutlinedTextField(
@@ -1048,32 +822,112 @@ private fun ProductFicheDialog(
                         label = { Text("Usine") },
                         autoClearValues = setOf("BCRAM"),
                         onDismissKeypad = { showKeypad = false },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f).testTag("fiche_usine_input")
                     )
                     ClearableOutlinedTextField(
                         value = dimension,
                         onValueChange = { dimension = it },
-                        label = { Text("Format") },
+                        label = { Text("Dimension (Format)") },
                         onDismissKeypad = { showKeypad = false },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f).testTag("fiche_dimension_input")
                     )
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Quick Dimension Presets
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Format :", style = MaterialTheme.typography.labelSmall, color = Slate400, fontWeight = FontWeight.Bold)
+                    listOf("60×60", "30×60", "45×45", "80×80", "120×60", "30×90").forEach { dim ->
+                        FilterChip(
+                            selected = dimension == dim,
+                            onClick = { dimension = dim; showKeypad = false },
+                            label = { Text(dim, fontWeight = FontWeight.Bold) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = Cyan500,
+                                selectedLabelColor = OnDark,
+                                containerColor = Slate950,
+                                labelColor = Slate400
+                            )
+                        )
+                    }
+                }
+
+                // Finition Input + Quick Chips (updates 3rd POS filter line automatically!)
+                ClearableOutlinedTextField(
+                    value = finition,
+                    onValueChange = { finition = it },
+                    label = { Text("Finition (ex: Brillant, Mat, Rectifié)") },
+                    onDismissKeypad = { showKeypad = false },
+                    modifier = Modifier.fillMaxWidth().testTag("fiche_finition_input")
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    listOf("brillant", "mat", "satiné", "rectifié", "lappato", "rustique").forEach { fin ->
+                        FilterChip(
+                            selected = finition.equals(fin, ignoreCase = true),
+                            onClick = { finition = fin; showKeypad = false },
+                            label = { Text(fin.replaceFirstChar { it.uppercase() }, fontWeight = FontWeight.Bold) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = Emerald500,
+                                selectedLabelColor = OnDark,
+                                containerColor = Slate950,
+                                labelColor = Slate400
+                            )
+                        )
+                    }
+                }
+
+                // Color swatch presets + Choix
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     listOf("1er Choix", "2ème Choix").forEach { c ->
                         FilterChip(
                             selected = choix == c,
                             onClick = { choix = c; showKeypad = false },
                             label = { Text(c, fontWeight = FontWeight.Bold) },
                             colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = Navy950,
-                                selectedLabelColor = OnDark
+                                selectedContainerColor = Cyan500,
+                                selectedLabelColor = OnDark,
+                                containerColor = Slate950,
+                                labelColor = Slate400
+                            )
+                        )
+                    }
+                    listOf(
+                        "#D6D3CD" to "Crème",
+                        "#9CA3AF" to "Gris",
+                        "#334155" to "Anthracite",
+                        "#B45309" to "Chêne",
+                        "#1E293B" to "Noir"
+                    ).forEach { (hex, cLabel) ->
+                        FilterChip(
+                            selected = colorHex.equals(hex, ignoreCase = true),
+                            onClick = {
+                                colorHex = hex
+                                colorName = cLabel
+                                showKeypad = false
+                            },
+                            label = { Text(cLabel, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = Amber500,
+                                selectedLabelColor = OnDark,
+                                containerColor = Slate950,
+                                labelColor = Slate400
                             )
                         )
                     }
                 }
 
-                // Mode de vente: Carton (m²) vs Pièce (ex: 120x60 vendu à la pièce)
+                // Mode de vente: Carton (m²) vs Pièce
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1086,7 +940,9 @@ private fun ProductFicheDialog(
                         label = { Text("Carton (m²)", fontWeight = FontWeight.Black) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = Cyan500,
-                            selectedLabelColor = OnDark
+                            selectedLabelColor = OnDark,
+                            containerColor = Slate950,
+                            labelColor = Slate400
                         ),
                         modifier = Modifier.testTag("fiche_unit_carton")
                     )
@@ -1096,7 +952,9 @@ private fun ProductFicheDialog(
                         label = { Text("Pièce", fontWeight = FontWeight.Black) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = Amber500,
-                            selectedLabelColor = OnDark
+                            selectedLabelColor = OnDark,
+                            containerColor = Slate950,
+                            labelColor = Slate400
                         ),
                         modifier = Modifier.testTag("fiche_unit_piece")
                     )
@@ -1109,7 +967,9 @@ private fun ProductFicheDialog(
                         isActive = showKeypad && activeField == FicheNumField.M2_CTN,
                         onSelect = { activeField = FicheNumField.M2_CTN; isPristine = true; showKeypad = true },
                         onClear = { m2CtnStr = ""; isPristine = false },
-                        modifier = Modifier.weight(1f)
+                        suffix = "m²",
+                        modifier = Modifier.weight(1f),
+                        testTag = "fiche_m2ctn_field"
                     )
                     NumericDisplayField(
                         label = "Pcs/Ctn",
@@ -1117,32 +977,10 @@ private fun ProductFicheDialog(
                         isActive = showKeypad && activeField == FicheNumField.PCS,
                         onSelect = { activeField = FicheNumField.PCS; isPristine = true; showKeypad = true },
                         onClear = { pcsStr = ""; isPristine = false },
-                        modifier = Modifier.weight(1f)
+                        suffix = "pcs",
+                        modifier = Modifier.weight(1f),
+                        testTag = "fiche_pcs_field"
                     )
-                    NumericDisplayField(
-                        label = "Stock (±)",
-                        value = stockStr,
-                        isActive = showKeypad && activeField == FicheNumField.STOCK,
-                        onSelect = { activeField = FicheNumField.STOCK; isPristine = true; showKeypad = true },
-                        onClear = { stockStr = ""; isPristine = false },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                if (showKeypad && activeField == FicheNumField.STOCK) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        OutlinedButton(
-                            onClick = {
-                                val cur = stockStr.toIntOrNull() ?: 0
-                                stockStr = (-cur).toString()
-                                isPristine = false
-                            },
-                            shape = RoundedCornerShape(10.dp),
-                            border = BorderStroke(1.dp, Rose500)
-                        ) {
-                            Text("Inverser signe Stock (±)", color = Rose400, fontWeight = FontWeight.Bold)
-                        }
-                    }
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1154,7 +992,8 @@ private fun ProductFicheDialog(
                         onClear = { prixStr = ""; isPristine = false },
                         suffix = "DA",
                         accentColor = Emerald500,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        testTag = "fiche_prix_field"
                     )
                     NumericDisplayField(
                         label = if (pricingUnit == "piece") "Prix / Pièce *" else "Prix / Pièce",
@@ -1164,20 +1003,22 @@ private fun ProductFicheDialog(
                         onClear = { prixPieceStr = ""; isPristine = false },
                         suffix = "DA",
                         accentColor = Cyan500,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        testTag = "fiche_prix_piece_field"
                     )
                 }
 
                 if (canViewPrixAchat) {
                     NumericDisplayField(
-                        label = "Prix Achat/m² (Confidentiel Direction)",
+                        label = "Prix Achat/m² (Confidentiel Admin)",
                         value = prixAchatStr,
                         isActive = showKeypad && activeField == FicheNumField.PRIX_ACHAT,
                         onSelect = { activeField = FicheNumField.PRIX_ACHAT; isPristine = true; showKeypad = true },
                         onClear = { prixAchatStr = ""; isPristine = false },
                         suffix = "DA",
                         accentColor = Amber500,
-                        modifier = Modifier.fillMaxWidth().testTag("fiche_prix_achat_field")
+                        modifier = Modifier.fillMaxWidth(),
+                        testTag = "fiche_prix_achat_field"
                     )
                 }
 
@@ -1190,19 +1031,14 @@ private fun ProductFicheDialog(
                                 FicheNumField.PRIX -> prixStr
                                 FicheNumField.PRIX_PIECE -> prixPieceStr
                                 FicheNumField.PRIX_ACHAT -> prixAchatStr
-                                FicheNumField.STOCK -> stockStr
                             }
-                            val isNeg = activeField == FicheNumField.STOCK && cur.startsWith("-")
-                            val absCur = if (isNeg) cur.removePrefix("-") else cur
-                            val (nextAbs, nextPristine) = applyKeypadInput(absCur, key, activeField.decimal, isPristine)
-                            val next = if (isNeg && nextAbs.isNotEmpty() && nextAbs != "0") "-$nextAbs" else nextAbs
+                            val (next, nextPristine) = applyKeypadInput(cur, key, activeField.decimal, isPristine)
                             when (activeField) {
                                 FicheNumField.M2_CTN -> m2CtnStr = next
                                 FicheNumField.PCS -> pcsStr = next
                                 FicheNumField.PRIX -> prixStr = next
                                 FicheNumField.PRIX_PIECE -> prixPieceStr = next
                                 FicheNumField.PRIX_ACHAT -> prixAchatStr = next
-                                FicheNumField.STOCK -> stockStr = next
                             }
                             isPristine = nextPristine
                         },
@@ -1230,11 +1066,11 @@ private fun ProductFicheDialog(
                                     pcs = (pcsStr.toIntOrNull() ?: 4).coerceAtLeast(1),
                                     prix = (prixStr.toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0),
                                     prixAchat = safePrixAchat,
-                                    stock = stockStr.toIntOrNull() ?: 0,
-                                    color = initial?.color ?: "#94a3b8",
-                                    colorName = initial?.colorName ?: "Standard",
+                                    stock = initial?.stock ?: 0,
+                                    color = colorHex,
+                                    colorName = colorName,
                                     image = initial?.image ?: "",
-                                    finition = initial?.finition ?: "brillant",
+                                    finition = finition.trim().ifBlank { "brillant" }.lowercase(),
                                     choix = choix,
                                     categorie = initial?.categorie ?: "sol",
                                     description = initial?.description ?: "${name.trim()} - ${usine.trim()}",
@@ -1245,11 +1081,11 @@ private fun ProductFicheDialog(
                         }
                     },
                     enabled = name.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                    modifier = Modifier.fillMaxWidth().height(54.dp).testTag("fiche_save_btn"),
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Emerald500, contentColor = OnDark)
                 ) {
-                    Text("Enregistrer Fiche", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black)
+                    Text("Enregistrer Modèle", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black)
                 }
             }
         }

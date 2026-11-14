@@ -80,7 +80,7 @@ data class PosUiState(
     val storeInfo: StoreInfo = PosSeeds.DEFAULT_STORE_INFO,
     val settings: AppSettings = PosSeeds.DEFAULT_SETTINGS,
     val currentUser: StaffUser? = null,
-    val isLocked: Boolean = true,
+    val isLocked: Boolean = false,
     val pinError: String? = null,
     val activeTab: String = "pos",
     val calculatorTarget: CalculatorTarget? = null,
@@ -96,7 +96,7 @@ data class PosUiState(
     val cloudSyncError: String? = null,
     val autoEmailPdf: Boolean = false,
     val autoWhatsappPhoto: Boolean = true,
-    val depotWatchEnabled: Boolean = true
+    val depotWatchEnabled: Boolean = false
 ) {
     val effectivePermissions: EffectivePermissions
         get() = PosSeeds.resolveEffectivePermissions(currentUser, rolePolicies)
@@ -113,7 +113,7 @@ data class PosUiState(
 
 private data class LocalNavState(
     val isReady: Boolean = false,
-    val isLocked: Boolean = true,
+    val isLocked: Boolean = false,
     val pinError: String? = null,
     val activeTab: String = "pos",
     val calculatorTarget: CalculatorTarget? = null,
@@ -125,24 +125,20 @@ private data class LocalNavState(
     val isSyncingCloud: Boolean = false,
     val pendingCloudWrites: Int = 0,
     val cloudSyncError: String? = null,
-    val depotWatchEnabled: Boolean = true
+    val depotWatchEnabled: Boolean = false
 )
 
 class PosViewModel(
     private val repository: PosRepository,
-    private val firestoreRepo: FirestorePosRepository?,
-    private val currentUserId: String?,
-    private val userEmail: String?,
-    private val userDisplayName: String?,
+    private val firestoreRepo: FirestorePosRepository? = null,
+    private val currentUserId: String? = null,
+    private val userEmail: String? = null,
+    private val userDisplayName: String? = null,
     private val isNetworkConnectedFlow: Flow<Boolean> = flowOf(true),
     private val appContext: Context? = null
 ) : ViewModel() {
 
-    private val navState = MutableStateFlow(
-        LocalNavState(
-            depotWatchEnabled = appContext?.let { SaleSystemNotifier.isDepotWatchEnabled(it) } ?: true
-        )
-    )
+    private val navState = MutableStateFlow(LocalNavState())
     private val networkOnlineState = MutableStateFlow(true)
     private val bootstrapMutex = Mutex()
     private var initialCloudSeedCompleted = false
@@ -150,31 +146,13 @@ class PosViewModel(
     init {
         viewModelScope.launch {
             isNetworkConnectedFlow.distinctUntilChanged().collect { online ->
-                val wasOffline = !networkOnlineState.value
                 networkOnlineState.value = online
-                val remote = firestoreRepo
-                val uid = currentUserId
-                if (online && wasOffline && remote != null && !uid.isNullOrBlank()) {
-                    syncBootstrapAndFlush(remote, uid, notifyUser = false)
-                } else if (!online && remote != null && !uid.isNullOrBlank()) {
-                    navState.update {
-                        it.copy(
-                            isCloudSynced = false,
-                            cloudSyncError = "Pas de connexion Internet — cache local actif"
-                        )
-                    }
-                }
             }
         }
         viewModelScope.launch {
-            networkOnlineState.value = isNetworkConnectedFlow.firstOrNull() ?: true
             repository.ensureSeeded()
-            navState.update { it.copy(isReady = true) }
-            val remote = firestoreRepo
-            val uid = currentUserId
-            if (remote != null && !uid.isNullOrBlank()) {
-                bootstrapAndObserveCloud(remote, uid)
-            }
+            repository.setCurrentUserId("u_vendeur")
+            navState.update { it.copy(isReady = true, isLocked = false, activeTab = "pos") }
         }
     }
 
@@ -457,22 +435,7 @@ class PosViewModel(
         trackOfflineMutation: Boolean = true,
         block: suspend (FirestorePosRepository, String) -> Unit
     ) {
-        val remote = firestoreRepo
-        val uid = currentUserId?.takeIf { it.isNotBlank() }
-        if (remote == null || uid == null) {
-            if (trackOfflineMutation) {
-                viewModelScope.launch { repository.setPendingOfflineSync(true) }
-            }
-            return
-        }
-        viewModelScope.launch {
-            navState.update { it.copy(pendingCloudWrites = it.pendingCloudWrites + 1) }
-            try {
-                runCloudSync(remote, uid, operationType, pathSuffix, block)
-            } finally {
-                navState.update { it.copy(pendingCloudWrites = (it.pendingCloudWrites - 1).coerceAtLeast(0)) }
-            }
-        }
+        // Offline local Room mode only
     }
 
     private suspend fun runCloudSync(
@@ -588,7 +551,7 @@ class PosViewModel(
             storeInfo = session.storeInfo,
             settings = session.settings,
             currentUser = matchedUser,
-            isLocked = nav.isLocked || ops.currentUserId.isNullOrBlank(),
+            isLocked = nav.isLocked,
             pinError = nav.pinError,
             activeTab = resolvedTab,
             calculatorTarget = liveCalcTarget,
@@ -596,15 +559,15 @@ class PosViewModel(
             showNotificationsSheet = nav.showNotificationsSheet,
             editingInvoice = nav.editingInvoice,
             statusMessage = nav.statusMessage,
-            firebaseUserEmail = userEmail,
-            isCloudSynced = effectiveCloudSynced,
-            isSyncingCloud = nav.isSyncingCloud,
+            firebaseUserEmail = null,
+            isCloudSynced = false,
+            isSyncingCloud = false,
             isNetworkAvailable = isNetworkAvailable,
-            pendingCloudWrites = nav.pendingCloudWrites,
-            cloudSyncError = nav.cloudSyncError,
-            autoEmailPdf = session.autoEmailPdf,
+            pendingCloudWrites = 0,
+            cloudSyncError = null,
+            autoEmailPdf = false,
             autoWhatsappPhoto = session.autoWhatsappPhoto,
-            depotWatchEnabled = nav.depotWatchEnabled
+            depotWatchEnabled = false
         )
     }
         .flowOn(Dispatchers.Default)
@@ -612,11 +575,12 @@ class PosViewModel(
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
-            initialValue = PosUiState(firebaseUserEmail = userEmail)
+            initialValue = PosUiState(isLocked = false)
         )
 
     fun attemptUnlock(user: StaffUser, enteredPin: String) {
-        if (enteredPin == user.pin) {
+        val noPinRequired = user.role != "admin" || user.pin.isBlank()
+        if (noPinRequired || enteredPin == user.pin) {
             viewModelScope.launch {
                 repository.setCurrentUserId(user.id)
                 val perms = PosSeeds.resolveEffectivePermissions(user, uiState.value.rolePolicies)
@@ -630,6 +594,31 @@ class PosViewModel(
         } else {
             navState.value = navState.value.copy(pinError = "Code PIN incorrect pour ${user.name}")
         }
+    }
+
+    fun switchToSellerMode() {
+        val seller = uiState.value.users.find { it.role != "admin" }
+            ?: PosSeeds.DEFAULT_USERS.first { it.role != "admin" }
+        attemptUnlock(seller, "")
+    }
+
+    fun changeAdminPin(newPin: String): Boolean {
+        val clean = newPin.filter { it.isDigit() }
+        if (uiState.value.currentUser?.role != "admin") {
+            showMessage("Seul l'Administrateur peut modifier ce code PIN")
+            return false
+        }
+        if (clean.length != 4) {
+            showMessage("Le code PIN doit contenir exactement 4 chiffres")
+            return false
+        }
+        val admin = uiState.value.users.find { it.id == "u_kader" || it.role == "admin" }
+            ?: PosSeeds.DEFAULT_USERS.first { it.role == "admin" }
+        viewModelScope.launch {
+            repository.upsertUser(admin.copy(pin = clean))
+            showMessage("Nouveau code PIN Administrateur enregistré")
+        }
+        return true
     }
 
     fun lockSession() {
@@ -1280,28 +1269,34 @@ class PosViewModel(
 
     fun saveProduct(product: TileProduct) {
         val state = uiState.value
-        if (!state.effectivePermissions.canModifyStock) {
-            showMessage("Modification catalogue et tarifs réservée à l'Admin / Manager")
+        val perms = state.effectivePermissions
+        val existed = state.products.any { it.id == product.id }
+        if (existed && !perms.canModifyStock) {
+            showMessage("Modification d'article existant réservée à l'Administrateur")
             return
         }
-        val actor = state.currentUser?.name ?: "Admin"
+        if (!existed && !perms.canAddProducts && !perms.canModifyStock) {
+            showMessage("Ajout de produit non autorisé")
+            return
+        }
+        val cleanProduct = if (!perms.canViewPrixAchat) {
+            product.copy(prixAchat = 0.0)
+        } else {
+            product
+        }
+        val actor = state.currentUser?.name ?: "Vendeur"
         val site = state.settings.activeStore
-        val existed = state.products.any { it.id == product.id }
         viewModelScope.launch {
-            repository.upsertProduct(product)
+            repository.upsertProduct(cleanProduct)
             val stockNotif = repository.recordStockNotification(
-                product = product,
-                detail = "${if (existed) "Article modifié" else "Nouvel article"} par $actor — Prix ${product.prix.toInt()} DA/m², Stock ${product.stock} ctn",
+                product = cleanProduct,
+                detail = "${if (existed) "Article modifié" else "Nouveau produit ajouté"} par $actor — ${cleanProduct.dimension} • ${cleanProduct.usine} • ${cleanProduct.finition} • Prix ${cleanProduct.prix.toInt()} DA",
                 actorName = actor,
                 site = site,
-                isAlert = product.stock <= 5
+                isAlert = false
             )
             appContext?.let { SaleSystemNotifier.recordLocalNotificationIds(it, listOf(stockNotif.id)) }
-            showMessage("Fiche produit enregistrée")
-            launchCloudSync(OperationType.WRITE, "products/${product.id}") { remote, uid ->
-                remote.upsertProduct(uid, product)
-                remote.createNotification(uid, stockNotif)
-            }
+            showMessage(if (existed) "Fiche produit mise à jour" else "Nouveau produit ajouté au catalogue")
         }
     }
 
@@ -1514,10 +1509,7 @@ class PosViewModel(
 
     fun setAutoEmailPdf(enabled: Boolean) {
         viewModelScope.launch {
-            repository.setAutoEmailPdf(enabled)
-            showMessage(
-                if (enabled) "Envoi PDF Gmail auto activé" else "Envoi PDF Gmail auto désactivé"
-            )
+            repository.setAutoEmailPdf(false)
         }
     }
 

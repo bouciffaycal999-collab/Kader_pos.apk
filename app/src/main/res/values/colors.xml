@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="app_bg_navy_ice">#FFF5F2EC</color>
-    <color name="app_surface_ice">#FFFFFFFF</color>
-    <color name="app_navy_primary">#FF142824</color>
-    <color name="purple_200">#FF0F766E</color>
-    <color name="purple_500">#FF142824</color>
-    <color name="purple_700">#FF1E3A34</color>
-    <color name="teal_200">#FFC2410C</color>
-    <color name="teal_700">#FF0F766E</color>
-    <color name="black">#FF161412</color>
-    <color name="white">#FFF5F2EC</color>
+    <color name="app_bg_navy_ice">#FF0A101D</color>
+    <color name="app_surface_ice">#FF131C30</color>
+    <color name="app_navy_primary">#FF0A101D</color>
+    <color name="purple_200">#FF0D9488</color>
+    <color name="purple_500">#FF18243E</color>
+    <color name="purple_700">#FF1F2F4F</color>
+    <color name="teal_200">#FFD97706</color>
+    <color name="teal_700">#FF0D9488</color>
+    <color name="black">#FF0A101D</color>
+    <color name="white">#FFF1F5F9</color>
 </resources>

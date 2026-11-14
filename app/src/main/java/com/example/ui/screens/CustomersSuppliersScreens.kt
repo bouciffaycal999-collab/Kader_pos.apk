@@ -77,6 +77,7 @@ import com.example.ui.theme.Rose500
 import com.example.ui.theme.Rose950
 import com.example.ui.theme.Slate100
 import com.example.ui.theme.Slate400
+import com.example.ui.theme.Slate700
 import com.example.ui.theme.Slate800
 import com.example.ui.theme.Slate900
 import com.example.ui.theme.Slate950
@@ -206,7 +207,7 @@ fun CustomersScreen(
                 modifier = Modifier.fillMaxWidth().widthIn(max = 500.dp).padding(14.dp),
                 shape = RoundedCornerShape(22.dp),
                 color = Slate900,
-                border = BorderStroke(2.dp, Navy950)
+                border = BorderStroke(1.5.dp, Slate700)
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Surface(shape = RoundedCornerShape(14.dp), color = Navy950) {
@@ -399,7 +400,7 @@ fun SuppliersScreen(
                 modifier = Modifier.fillMaxWidth().widthIn(max = 540.dp).padding(14.dp),
                 shape = RoundedCornerShape(22.dp),
                 color = Slate900,
-                border = BorderStroke(2.dp, Navy950)
+                border = BorderStroke(1.5.dp, Slate700)
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Surface(shape = RoundedCornerShape(14.dp), color = Navy950) {
@@ -455,7 +456,7 @@ fun SuppliersScreen(
                 modifier = Modifier.fillMaxWidth().widthIn(max = 500.dp).padding(14.dp),
                 shape = RoundedCornerShape(22.dp),
                 color = Slate900,
-                border = BorderStroke(2.dp, Navy950)
+                border = BorderStroke(1.5.dp, Slate700)
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Surface(shape = RoundedCornerShape(14.dp), color = Navy950) {
@@ -512,7 +513,7 @@ fun NonImeAmountDialog(
             modifier = Modifier.fillMaxWidth().widthIn(max = 480.dp).padding(14.dp),
             shape = RoundedCornerShape(22.dp),
             color = Slate900,
-            border = BorderStroke(2.dp, Navy950)
+            border = BorderStroke(1.5.dp, Slate700)
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Surface(shape = RoundedCornerShape(14.dp), color = Navy950) {
@@ -581,7 +582,7 @@ private fun SupplierMoveDialog(
             modifier = Modifier.fillMaxWidth().widthIn(max = 520.dp).padding(14.dp),
             shape = RoundedCornerShape(22.dp),
             color = Slate900,
-            border = BorderStroke(2.dp, Navy950)
+            border = BorderStroke(1.5.dp, Slate700)
         ) {
             Column(modifier = Modifier.verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Surface(shape = RoundedCornerShape(14.dp), color = Navy950) {
