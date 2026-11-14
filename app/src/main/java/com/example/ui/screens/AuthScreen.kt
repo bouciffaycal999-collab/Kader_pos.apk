@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.credentials.CredentialManager
 import com.example.auth.AuthAttemptResult
 import com.example.auth.GoogleAuthManager
+import com.example.ui.theme.Amber400
 import com.example.ui.theme.Amber500
 import com.example.ui.theme.Cyan400
 import com.example.ui.theme.Cyan500
@@ -151,7 +152,7 @@ fun AuthScreen(
                             Icon(Icons.Default.CloudDone, contentDescription = null, tint = Emerald500, modifier = Modifier.size(22.dp))
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "Utilisez l'application directement hors-ligne sur cet appareil, puis connectez Google Cloud à tout moment dans Réglages.",
+                                text = "Synchronisation Cloud Google & Firestore active : stock, factures, équipe et alertes Dépôt en temps réel.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Slate100
                             )
@@ -186,29 +187,8 @@ fun AuthScreen(
                 }
 
                 Button(
-                    onClick = onContinueOffline,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(58.dp)
-                        .testTag("continue_offline_button"),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Emerald500,
-                        contentColor = OnDark
-                    )
-                ) {
-                    Icon(Icons.Default.CloudOff, contentDescription = null, modifier = Modifier.size(22.dp))
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = "Utiliser Hors-Ligne (Sans Internet)",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Black
-                    )
-                }
-
-                OutlinedButton(
                     onClick = {
-                        if (isLoading) return@OutlinedButton
+                        if (isLoading) return@Button
                         isLoading = true
                         errorMessage = null
                         scope.launch {
@@ -222,7 +202,7 @@ fun AuthScreen(
                                 }
                                 AuthAttemptResult.NoSavedCredential -> {
                                     isLoading = false
-                                    errorMessage = "Aucun compte Google disponible sur cet appareil. Utilisez le mode Hors-Ligne."
+                                    errorMessage = "Aucun compte Google détecté sur cet appareil. Ajoutez un compte Google ou continuez hors-ligne."
                                 }
                                 is AuthAttemptResult.Error -> {
                                     isLoading = false
@@ -234,29 +214,50 @@ fun AuthScreen(
                     enabled = !isLoading,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(54.dp)
+                        .height(58.dp)
                         .testTag("google_sign_in_button"),
                     shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.5.dp, Cyan500)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Cyan500,
+                        contentColor = OnDark
+                    )
                 ) {
                     if (isLoading) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(20.dp),
-                            color = Cyan500,
+                            color = OnDark,
                             strokeWidth = 2.5.dp
                         )
                         Spacer(modifier = Modifier.width(10.dp))
-                        Text("Vérification Google...", color = Cyan400, fontWeight = FontWeight.Black)
+                        Text("Connexion Google Cloud...", color = OnDark, fontWeight = FontWeight.Black)
                     } else {
-                        Icon(Icons.Default.Login, contentDescription = null, tint = Cyan400, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Default.Login, contentDescription = null, modifier = Modifier.size(22.dp))
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = "Connecter la Base Cloud Google",
+                            text = "Connecter Google Cloud (En Ligne)",
                             style = MaterialTheme.typography.titleMedium,
-                            color = Cyan400,
                             fontWeight = FontWeight.Black
                         )
                     }
+                }
+
+                OutlinedButton(
+                    onClick = onContinueOffline,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp)
+                        .testTag("continue_offline_button"),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.5.dp, Amber500)
+                ) {
+                    Icon(Icons.Default.CloudOff, contentDescription = null, tint = Amber400, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "Utiliser Hors-Ligne (Sans Internet)",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Amber400,
+                        fontWeight = FontWeight.Black
+                    )
                 }
             }
         }

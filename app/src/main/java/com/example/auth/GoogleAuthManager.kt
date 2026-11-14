@@ -1,6 +1,8 @@
 package com.example.auth
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.util.Log
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.Credential
@@ -8,6 +10,7 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
@@ -38,8 +41,18 @@ sealed interface AuthAttemptResult {
 object GoogleAuthManager {
     private const val TAG = "Auth"
 
-    fun isFirebaseAvailable(context: Context): Boolean =
-        runCatching { FirebaseApp.getApps(context.applicationContext).isNotEmpty() }.getOrDefault(false)
+    fun isFirebaseAvailable(context: Context): Boolean {
+        val appContext = context.applicationContext
+        val initialized = runCatching {
+            val apps = FirebaseApp.getApps(appContext)
+            if (apps.isNotEmpty()) {
+                true
+            } else {
+                FirebaseApp.initializeApp(appContext) != null
+            }
+        }.getOrDefault(false)
+        return initialized && resolveServerClientId(appContext) != null
+    }
 
     private fun safeAuth(context: Context, explicitAuth: FirebaseAuth?): FirebaseAuth? {
         if (explicitAuth != null) return explicitAuth
@@ -48,9 +61,21 @@ object GoogleAuthManager {
     }
 
     private fun resolveServerClientId(context: Context): String? {
-        val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
-        if (resId == 0) return null
-        return runCatching { context.getString(resId) }.getOrNull()?.takeIf { it.isNotBlank() }
+        val packagesToTry = listOf(context.packageName, "com.example").distinct()
+        for (pkg in packagesToTry) {
+            val resId = context.resources.getIdentifier("default_web_client_id", "string", pkg)
+            if (resId != 0) {
+                val value = runCatching { context.getString(resId) }.getOrNull()?.trim()
+                if (!value.isNullOrBlank()) return value
+            }
+        }
+        return null
+    }
+
+    private tailrec fun Context.findActivity(): Activity? = when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
     }
 
     fun authStateFlow(auth: FirebaseAuth?): Flow<FirebaseUser?> = callbackFlow {
@@ -68,12 +93,13 @@ object GoogleAuthManager {
 
     suspend fun attemptSilentSignIn(
         context: Context,
-        credentialManager: CredentialManager = CredentialManager.create(context),
+        credentialManager: CredentialManager = CredentialManager.create(context.findActivity() ?: context),
         auth: FirebaseAuth? = null
     ): AuthAttemptResult {
         val firebaseAuth = safeAuth(context, auth) ?: return AuthAttemptResult.NoSavedCredential
         if (firebaseAuth.currentUser != null) return AuthAttemptResult.Success
         val serverClientId = resolveServerClientId(context) ?: return AuthAttemptResult.NoSavedCredential
+        val uiContext = context.findActivity() ?: context
         val googleIdOption = GetGoogleIdOption.Builder()
             .setFilterByAuthorizedAccounts(true)
             .setServerClientId(serverClientId)
@@ -84,7 +110,7 @@ object GoogleAuthManager {
             .build()
 
         return try {
-            val result = credentialManager.getCredential(context = context, request = request)
+            val result = credentialManager.getCredential(context = uiContext, request = request)
             signInWithGoogleCredential(result.credential, firebaseAuth)
         } catch (e: CancellationException) {
             throw e
@@ -101,13 +127,14 @@ object GoogleAuthManager {
 
     suspend fun signInInteractive(
         context: Context,
-        credentialManager: CredentialManager = CredentialManager.create(context),
+        credentialManager: CredentialManager = CredentialManager.create(context.findActivity() ?: context),
         auth: FirebaseAuth? = null
     ): AuthAttemptResult {
-        val firebaseAuth = safeAuth(context, auth)
-            ?: return AuthAttemptResult.Error("Cloud Google non configuré dans cette version APK hors-ligne.")
         val serverClientId = resolveServerClientId(context)
-            ?: return AuthAttemptResult.Error("Cloud Google non configuré dans cette version APK hors-ligne.")
+            ?: return AuthAttemptResult.Error("ID Client Web Google (default_web_client_id) manquant dans la configuration Firebase.")
+        val firebaseAuth = safeAuth(context, auth)
+            ?: return AuthAttemptResult.Error("Initialisation Firebase Auth impossible sur cet appareil.")
+        val uiContext = context.findActivity() ?: context
         val signInWithGoogleOption = GetSignInWithGoogleOption.Builder(serverClientId)
             .build()
         val request = GetCredentialRequest.Builder()
@@ -115,7 +142,7 @@ object GoogleAuthManager {
             .build()
 
         return try {
-            val result = credentialManager.getCredential(context = context, request = request)
+            val result = credentialManager.getCredential(context = uiContext, request = request)
             signInWithGoogleCredential(result.credential, firebaseAuth)
         } catch (e: CancellationException) {
             throw e
@@ -125,6 +152,9 @@ object GoogleAuthManager {
         } catch (e: GetCredentialCancellationException) {
             Log.w(TAG, "Google Sign-In cancelled or dismissed: ${e.message}", e)
             AuthAttemptResult.Cancelled
+        } catch (e: GetCredentialException) {
+            Log.e(TAG, "Google Credential error (${e.type}): ${e.message}", e)
+            AuthAttemptResult.Error(e.errorMessage?.toString()?.takeIf { it.isNotBlank() } ?: e.localizedMessage ?: "Échec de la connexion Google.")
         } catch (e: Exception) {
             Log.e(TAG, "Google Sign-In failed: ${e.message}", e)
             AuthAttemptResult.Error(e.localizedMessage ?: "Échec de la connexion Google.")

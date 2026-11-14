@@ -219,6 +219,13 @@ fun KaderCeramicPosApp(
         )
     }
 
+    LaunchedEffect(user?.uid) {
+        if (user != null) {
+            prefs.edit().putBoolean("offline_mode_enabled", false).apply()
+            allowOfflineMode = false
+        }
+    }
+
     if (user == null && !allowOfflineMode) {
         AuthScreen(
             onContinueOffline = {

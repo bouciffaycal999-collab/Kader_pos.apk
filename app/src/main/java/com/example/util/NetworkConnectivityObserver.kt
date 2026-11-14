@@ -17,8 +17,7 @@ object NetworkConnectivityObserver {
                 ?: return true
             val active = cm.activeNetwork ?: return false
             val caps = cm.getNetworkCapabilities(active) ?: return false
-            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
         }.getOrDefault(true)
     }
 
@@ -35,8 +34,7 @@ object NetworkConnectivityObserver {
             return runCatching {
                 val active = cm.activeNetwork ?: return@runCatching false
                 val caps = cm.getNetworkCapabilities(active) ?: return@runCatching false
-                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             }.getOrDefault(true)
         }
 
@@ -48,8 +46,7 @@ object NetworkConnectivityObserver {
             }
 
             override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
-                val ok = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                    networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                val ok = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 trySend(ok)
             }
 

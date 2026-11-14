@@ -2,45 +2,45 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// CERAMICA Architectural Showroom Palette — "Porcelaine & Cobalt Studio"
-// Warm Travertine Limestone Canvas + Pure Glazed Porcelain + Deep Aegean Cobalt + Champagne Bronze
-val Navy950 = Color(0xFF1B365D)      // Deep Aegean Indigo (Architectural Accents & Secondary Hero Pills)
-val Navy900 = Color(0xFF264778)      // Rich Sapphire Blue
-val Navy800 = Color(0xFF345B96)      // Muted Cobalt Surface
-val OnDark = Color(0xFFFFFFFF)       // Crisp Pure White on Solid CTAs / Indigo Pills
+// CERAMICA Architectural Showroom Palette — "Émeraude & Terracotta Studio"
+// Warm Travertine Sand Canvas + Pure Porcelain + Deep Architectural Pine + Emerald Teal + Mediterranean Terracotta
+val Navy950 = Color(0xFF142824)      // Deep Architectural Pine (Top Heroes, Headers, Keypad Frame)
+val Navy900 = Color(0xFF1E3A34)      // Rich Forest Cypress
+val Navy800 = Color(0xFF2B4F47)      // Muted Cypress Accent Surface
+val OnDark = Color(0xFFFFFFFF)       // Crisp Pure White on Solid CTAs & Dark Headers
 
-val Slate950 = Color(0xFFF6F5F0)     // App Canvas: Warm Limestone / Travertine Cream
+val Slate950 = Color(0xFFF5F2EC)     // App Canvas: Warm Travertine Limestone Sand
 val Slate900 = Color(0xFFFFFFFF)     // Card Surface: Pure Glazed Porcelain White
-val Slate850 = Color(0xFFEEECE5)     // Nested Input / Grout Mist Surface
-val Slate800 = Color(0xFFE2DFD5)     // Hairline Architectural Divider / Card Border
-val Slate700 = Color(0xFFCCC7B8)     // Crisp Input / Keycap Border
-val Slate500 = Color(0xFF78716C)     // Balanced Warm Stone Hint
-val Slate400 = Color(0xFF57534E)     // Readable Warm Slate Secondary Text
-val Slate200 = Color(0xFF292524)     // Strong Body Copy
-val Slate100 = Color(0xFF171923)     // Primary High-Contrast Charcoal Ink
+val Slate850 = Color(0xFFEBE6DC)     // Nested Input / Grout Sand Mist Surface
+val Slate800 = Color(0xFFDDD6C8)     // Hairline Architectural Travertine Divider / Border
+val Slate700 = Color(0xFFC5BCA9)     // Crisp Input / Keycap Border
+val Slate500 = Color(0xFF756D63)     // Balanced Warm Stone Hint
+val Slate400 = Color(0xFF534D45)     // High-Readability Charcoal-Taupe Secondary Text
+val Slate200 = Color(0xFF282420)     // Strong Body Copy
+val Slate100 = Color(0xFF161412)     // Deep Espresso-Charcoal Primary Ink
 
-// Champagne Bronze / Warm Brass (Highlights, Calculators, Secondary Accents)
-val Amber500 = Color(0xFFC47F17)     // Refined Travertine Gold / Bronze CTA
-val Amber400 = Color(0xFFA16207)     // Deep Brass Icon / Highlight on light cards
-val Amber300 = Color(0xFF854D0E)     // Rich Bronze Label on champagne tint chips
-val Amber950 = Color(0xFFFEF8E7)     // Soft Champagne Wash
+// Mediterranean Terracotta / Burnt Sienna (Calculators, Showroom Highlights, Secondary Accents)
+val Amber500 = Color(0xFFC2410C)     // Vibrant Mediterranean Terracotta CTA
+val Amber400 = Color(0xFF9A3412)     // Deep Burnt Sienna Icon / Highlight on light cards
+val Amber300 = Color(0xFF7C2D12)     // Rich Terracotta Label on warm tint chips
+val Amber950 = Color(0xFFFFF1EB)     // Soft Terracotta Blush Wash
 
-// Royal Cobalt / Sapphire (Primary Interactive Showroom Accent, Dispo & Active Nav)
-val Cyan500 = Color(0xFF1D4ED8)      // Royal Showroom Cobalt CTA
-val Cyan400 = Color(0xFF1E40AF)      // Deep Cobalt Highlight on light cards
-val Cyan300 = Color(0xFF1E3A8A)      // Rich Sapphire Label on ice tint chips
-val Cyan950 = Color(0xFFEFF4FF)      // Crisp Ice-Sapphire Badge Tint
+// Architectural Emerald Teal (Primary Interactive Showroom Accent, Dispo, Cloud Sync & Active Nav)
+val Cyan500 = Color(0xFF0F766E)      // Signature Emerald Teal CTA
+val Cyan400 = Color(0xFF0D5E58)      // Crisp Deep Teal Highlight on light cards
+val Cyan300 = Color(0xFF115E59)      // Rich Jade-Teal Label on sea-glass tint chips
+val Cyan950 = Color(0xFFE6F4F1)      // Crisp Sea-Glass Mint Badge Tint
 
-// Botanical Sage Emerald (Validation, Stock OK, Totals, WhatsApp Dispatch)
-val Emerald500 = Color(0xFF15803D)   // Refined Botanical Sage CTA
-val Emerald400 = Color(0xFF166534)   // Crisp Forest Sage Text on light cards
-val Emerald300 = Color(0xFF14532D)   // Deep Jade Label on soft tint chips
-val Emerald950 = Color(0xFFEDF7F0)   // Soft Mineral Sage Badge Tint
+// Fresh Mineral Jade (Validation, Stock OK, Totals, WhatsApp Dispatch)
+val Emerald500 = Color(0xFF16A34A)   // Refined Fresh Jade Green CTA
+val Emerald400 = Color(0xFF15803D)   // Crisp Leaf Green Text on light cards
+val Emerald300 = Color(0xFF166534)   // Deep Jade Label on soft mint chips
+val Emerald950 = Color(0xFFECFDF3)   // Soft Mineral Mint Badge Tint
 
-// Burgundy Crimson (Exit, Delete, Rupture, Reste/Crédit)
-val Rose500 = Color(0xFFBE123C)      // Crisp Architectural Burgundy CTA
-val Rose400 = Color(0xFF9F1239)      // Deep Crimson Text on light cards
-val Rose950 = Color(0xFFFFF1F3)      // Soft Rose Quartz Badge Tint
+// Crimson Coral (Exit, Delete, Rupture, Reste/Crédit)
+val Rose500 = Color(0xFFDC2626)      // Crisp Crimson Coral CTA
+val Rose400 = Color(0xFFB91C1C)      // Deep Crimson Text on light cards
+val Rose950 = Color(0xFFFEF2F2)      // Soft Rose Quartz Badge Tint
 
-val Purple400 = Color(0xFF6D28D9)
-val Purple950 = Color(0xFFF5F3FF)
+val Purple400 = Color(0xFF7E22CE)
+val Purple950 = Color(0xFFFAF5FF)

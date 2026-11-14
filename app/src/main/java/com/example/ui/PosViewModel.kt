@@ -319,9 +319,7 @@ class PosViewModel(
                     )
                     initialCloudSeedCompleted = true
                 }
-                launchCloudSync(OperationType.WRITE, "") { r, user ->
-                    r.ensureUserAccount(user, userEmail, userDisplayName)
-                }
+                remote.ensureUserAccount(uid, userEmail, userDisplayName)
                 withTimeoutOrNull(8_000L) {
                     remote.waitForPendingWrites()
                 }
@@ -352,10 +350,6 @@ class PosViewModel(
         val uid = currentUserId
         if (remote == null || uid.isNullOrBlank()) {
             showMessage("Connectez un compte Google pour activer la sync Cloud.")
-            return
-        }
-        if (!networkOnlineState.value) {
-            showMessage("Pas de connexion Internet — les données attendent en file locale.")
             return
         }
         viewModelScope.launch {
