@@ -216,6 +216,11 @@ fun PosScreen(
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize().background(Slate950)) {
         val isWide = maxWidth >= 840.dp
+        val gridColumns = when {
+            maxWidth >= 1000.dp -> 4
+            maxWidth >= 600.dp -> 3
+            else -> 2
+        }
 
         Row(modifier = Modifier.fillMaxSize()) {
             // Main Catalog Pane
@@ -500,7 +505,7 @@ fun PosScreen(
                         }
                     } else if (isGridView) {
                         LazyVerticalGrid(
-                            columns = GridCells.Adaptive(minSize = 172.dp),
+                            columns = GridCells.Fixed(gridColumns),
                             contentPadding = PaddingValues(12.dp),
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -868,6 +873,8 @@ private fun ProductTileCard(
                             style = MaterialTheme.typography.labelMedium,
                             color = OnDark,
                             fontWeight = FontWeight.Black,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                         )
                     }
@@ -884,6 +891,8 @@ private fun ProductTileCard(
                             style = MaterialTheme.typography.labelMedium,
                             color = stockBadgeFg,
                             fontWeight = FontWeight.Black,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                         )
                     }

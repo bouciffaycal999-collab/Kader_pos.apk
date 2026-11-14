@@ -38,7 +38,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Login
@@ -902,6 +901,7 @@ fun SettingsScreen(
     storeInfo: StoreInfo,
     settings: AppSettings,
     autoEmailPdf: Boolean,
+    autoWhatsappPhoto: Boolean = true,
     firebaseUserEmail: String?,
     isCloudSynced: Boolean,
     cloudSyncError: String?,
@@ -917,6 +917,7 @@ fun SettingsScreen(
     onSaveStoreInfo: (StoreInfo) -> Unit,
     onSaveSettings: (AppSettings) -> Unit,
     onSetAutoEmailPdf: (Boolean) -> Unit,
+    onSetAutoWhatsappPhoto: (Boolean) -> Unit = {},
     onResetCatalog: () -> Unit,
     onExportJson: ((String) -> Unit) -> Unit,
     onImportJson: (String) -> Unit
@@ -939,7 +940,6 @@ fun SettingsScreen(
     var adresse by remember(storeInfo) { mutableStateOf(storeInfo.adresse) }
     var tel by remember(storeInfo) { mutableStateOf(storeInfo.tel) }
     var tel2 by remember(storeInfo) { mutableStateOf(storeInfo.tel2) }
-    var emailBureau by remember(storeInfo) { mutableStateOf(storeInfo.email) }
     var deviceSellerName by remember(settings) { mutableStateOf(settings.deviceSellerName) }
     var deviceSellerPhone by remember(settings) { mutableStateOf(settings.deviceSellerPhone) }
     var invoiceRecipients by remember(storeInfo) { mutableStateOf(storeInfo.invoiceWaRecipients) }
@@ -1105,8 +1105,8 @@ fun SettingsScreen(
 
             // Destinataires WhatsApp Factures (Obligatoire avant impression) & Dispo Dépôt
             WaRecipientsEditorCard(
-                title = "Destinataires Factures WhatsApp (Kader, Walid...)",
-                subtitle = "Chaque facture générée en photo doit être envoyée sur WhatsApp avant impression.",
+                title = "WhatsApp Factures (0676754124)",
+                subtitle = "Chaque facture générée en Photo + PDF est envoyée automatiquement sur WhatsApp 0676754124 avant impression.",
                 recipients = invoiceRecipients,
                 onUpdateRecipients = { invoiceRecipients = it },
                 onSaveAll = {
@@ -1117,8 +1117,8 @@ fun SettingsScreen(
             )
 
             WaRecipientsEditorCard(
-                title = "Destinataires Dispo Dépôt (Kader, Walid, Toufik, Amine...)",
-                subtitle = "Contacts disponibles lorsque le vendeur vérifie la disponibilité d'un modèle.",
+                title = "WhatsApp Dispo Dépôt (0676754124)",
+                subtitle = "Contact utilisé lorsque le vendeur vérifie la disponibilité d'un modèle.",
                 recipients = dispoRecipients,
                 onUpdateRecipients = { dispoRecipients = it },
                 onSaveAll = {
@@ -1128,41 +1128,35 @@ fun SettingsScreen(
                 testTagPrefix = "wa_dispo"
             )
 
-            // Automatic Bureau Email PDF & WhatsApp Settings
+            // WhatsApp Only Bureau Settings (No Gmail)
             ElevatedCard(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.elevatedCardColors(containerColor = Slate900),
                 elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
             ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Envoi Bureau & Numéros Principaux", style = MaterialTheme.typography.titleMedium, color = Amber400, fontWeight = FontWeight.Black)
-                    ClearableOutlinedTextField(
-                        value = emailBureau,
-                        onValueChange = { emailBureau = it },
-                        label = { Text("Gmail du Bureau (réception PDF auto)") },
-                        modifier = Modifier.fillMaxWidth().testTag("settings_bureau_email_input")
-                    )
+                    Text("Envoi WhatsApp Bureau (0676754124)", style = MaterialTheme.typography.titleMedium, color = Amber400, fontWeight = FontWeight.Black)
                     ClearableOutlinedTextField(
                         value = tel,
                         onValueChange = { tel = it },
-                        label = { Text("WhatsApp Direction Principale (Kader)") },
+                        label = { Text("WhatsApp Principal (0676754124)") },
                         modifier = Modifier.fillMaxWidth()
                     )
                     ClearableOutlinedTextField(
                         value = tel2,
                         onValueChange = { tel2 = it },
-                        label = { Text("WhatsApp Dépôt") },
+                        label = { Text("WhatsApp Dépôt (0676754124)") },
                         modifier = Modifier.fillMaxWidth()
                     )
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Ouvrir Gmail PDF auto après vente", color = Slate100, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                            Text("Prépare et envoie la facture PDF au bureau pour imprimer avant l'arrivée du client", color = Slate400, style = MaterialTheme.typography.labelSmall)
+                            Text("Envoyer Photo + PDF WhatsApp auto après vente", color = Slate100, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            Text("Ouvre WhatsApp automatiquement avec la photo PNG et le PDF de la facture vers 0676754124 avant impression", color = Slate400, style = MaterialTheme.typography.labelSmall)
                         }
                         Switch(
-                            checked = autoEmailPdf,
-                            onCheckedChange = onSetAutoEmailPdf,
-                            modifier = Modifier.testTag("settings_auto_email_switch")
+                            checked = autoWhatsappPhoto,
+                            onCheckedChange = onSetAutoWhatsappPhoto,
+                            modifier = Modifier.testTag("settings_auto_wa_photo_switch")
                         )
                     }
                     Button(
@@ -1171,9 +1165,9 @@ fun SettingsScreen(
                                 storeInfo.copy(
                                     nom = nom.trim().ifBlank { storeInfo.nom },
                                     adresse = adresse.trim().ifBlank { storeInfo.adresse },
-                                    tel = tel.trim(),
-                                    tel2 = tel2.trim(),
-                                    email = emailBureau.trim(),
+                                    tel = tel.trim().ifBlank { "0676754124" },
+                                    tel2 = tel2.trim().ifBlank { "0676754124" },
+                                    email = "",
                                     invoiceWaRecipients = invoiceRecipients,
                                     dispoWaRecipients = dispoRecipients
                                 )
@@ -1185,7 +1179,7 @@ fun SettingsScreen(
                     ) {
                         Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Enregistrer Gmail & WhatsApp", fontWeight = FontWeight.Black)
+                        Text("Enregistrer WhatsApp Bureau", fontWeight = FontWeight.Black)
                     }
                 }
             }
@@ -1425,9 +1419,9 @@ fun SettingsScreen(
                                 storeInfo.copy(
                                     nom = nom.trim(),
                                     adresse = adresse.trim(),
-                                    tel = tel.trim(),
-                                    tel2 = tel2.trim(),
-                                    email = emailBureau.trim()
+                                    tel = tel.trim().ifBlank { "0676754124" },
+                                    tel2 = tel2.trim().ifBlank { "0676754124" },
+                                    email = ""
                                 )
                             )
                         },
@@ -1708,14 +1702,8 @@ fun NotificationsSheet(
         }
     }
 
-    val waManagementDigits = remember(storeInfo.tel, storeInfo.invoiceWaRecipients) {
-        val recPhone = storeInfo.invoiceWaRecipients.firstOrNull { it.phone.isNotBlank() }?.phone
-        toDzWhatsAppDigits(recPhone ?: storeInfo.tel)?.takeIf { it.isNotBlank() } ?: PosSeeds.WHATSAPP_MANAGEMENT
-    }
-    val waDepotDigits = remember(storeInfo.tel2, storeInfo.dispoWaRecipients) {
-        val depPhone = storeInfo.dispoWaRecipients.lastOrNull { it.phone.isNotBlank() }?.phone
-        toDzWhatsAppDigits(depPhone ?: storeInfo.tel2)?.takeIf { it.isNotBlank() } ?: PosSeeds.WHATSAPP_DEPOT
-    }
+    val waManagementDigits = PosSeeds.WHATSAPP_MANAGEMENT
+    val waDepotDigits = PosSeeds.WHATSAPP_MANAGEMENT
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1880,34 +1868,6 @@ fun NotificationsSheet(
                                         Icon(Icons.Default.Warehouse, contentDescription = null, modifier = Modifier.size(15.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text("WA Dépôt", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Black)
-                                    }
-                                    Button(
-                                        onClick = {
-                                            val emailIntent = Intent(Intent.ACTION_SEND).apply {
-                                                type = "text/plain"
-                                                if (storeInfo.email.isNotBlank()) {
-                                                    putExtra(Intent.EXTRA_EMAIL, arrayOf(storeInfo.email.trim()))
-                                                }
-                                                putExtra(Intent.EXTRA_SUBJECT, "Alerte CERAMICA POS #${n.reference}")
-                                                putExtra(Intent.EXTRA_TEXT, "Alerte: ${n.reference}\nClient/Auteur: ${n.client}\n${n.articlesSummary}\nDate: ${n.date}")
-                                            }
-                                            val gmailIntent = Intent(emailIntent).apply { setPackage("com.google.android.gm") }
-                                            runCatching {
-                                                if (gmailIntent.resolveActivity(context.packageManager) != null) {
-                                                    context.startActivity(gmailIntent)
-                                                } else {
-                                                    context.startActivity(Intent.createChooser(emailIntent, "Envoyer alerte par Gmail"))
-                                                }
-                                            }
-                                        },
-                                        modifier = Modifier.weight(0.85f).height(42.dp),
-                                        shape = RoundedCornerShape(10.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Amber500, contentColor = OnDark),
-                                        contentPadding = PaddingValues(horizontal = 6.dp)
-                                    ) {
-                                        Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(15.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Gmail", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Black)
                                     }
                                 }
                             }

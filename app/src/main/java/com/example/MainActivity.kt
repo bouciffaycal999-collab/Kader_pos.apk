@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -163,7 +164,19 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.TRANSPARENT
+            ),
+            navigationBarStyle = SystemBarStyle.light(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.TRANSPARENT
+            )
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.decorView.isForceDarkAllowed = false
+        }
         SaleSystemNotifier.ensureChannels(applicationContext)
         captureNotificationIntent(intent)
         setContent {
@@ -844,6 +857,7 @@ private fun KaderPosSignedInContent(
                 storeInfo = state.storeInfo,
                 settings = state.settings,
                 autoEmailPdf = state.autoEmailPdf,
+                autoWhatsappPhoto = state.autoWhatsappPhoto,
                 canHideInvoicePrices = effectivePerms.canHideInvoicePrices,
                 onToggleHidePrices = { id, hide -> viewModel.setInvoiceHidePrices(id, hide) },
                 onMarkWhatsappSent = { id -> viewModel.markInvoiceWhatsappSent(id) },
@@ -1206,6 +1220,7 @@ private fun ActiveTabContent(
             storeInfo = state.storeInfo,
             settings = state.settings,
             autoEmailPdf = state.autoEmailPdf,
+            autoWhatsappPhoto = state.autoWhatsappPhoto,
             firebaseUserEmail = state.firebaseUserEmail,
             isCloudSynced = state.isCloudSynced,
             isNetworkAvailable = state.isNetworkAvailable,
@@ -1221,6 +1236,7 @@ private fun ActiveTabContent(
             onSaveStoreInfo = { viewModel.saveStoreInfo(it) },
             onSaveSettings = { viewModel.saveSettings(it) },
             onSetAutoEmailPdf = { viewModel.setAutoEmailPdf(it) },
+            onSetAutoWhatsappPhoto = { viewModel.setAutoWhatsappPhoto(it) },
             onResetCatalog = { viewModel.resetCatalog() },
             onExportJson = { viewModel.exportAllDataJson(it) },
             onImportJson = { viewModel.importAllDataJson(it) }

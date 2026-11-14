@@ -372,15 +372,11 @@ object PosSeeds {
     val SITES = listOf("Depot Remchi", "Magasin Ihab", "Magasin Zohir")
 
     val DEFAULT_INVOICE_WA_RECIPIENTS = listOf(
-        WaRecipient(name = "Kader (Admin / Gérant)", phone = "0676754124"),
-        WaRecipient(name = "Walid (Owner & Gérant)", phone = "")
+        WaRecipient(name = "Bureau / Kader (0676754124)", phone = "0676754124")
     )
 
     val DEFAULT_DISPO_WA_RECIPIENTS = listOf(
-        WaRecipient(name = "Kader (Admin / Dépôt)", phone = "0676754124"),
-        WaRecipient(name = "Walid (Owner & Gérant)", phone = ""),
-        WaRecipient(name = "Toufik (Owner & Gérant)", phone = ""),
-        WaRecipient(name = "Amine (Dépôt)", phone = "")
+        WaRecipient(name = "Bureau / Kader (0676754124)", phone = "0676754124")
     )
 
     val DEFAULT_STORE_INFO = StoreInfo(
@@ -389,8 +385,8 @@ object PosSeeds {
         slogan = "Dalle de Sol, Faïence Murale, Parquet Céramique & Accessoires de Pose",
         adresse = "ZONE INDUSTRIELLE REMCHI المنطقة الصناعية",
         tel = "0676754124",
-        tel2 = "0674369056",
-        email = "contact@ceramica.dz",
+        tel2 = "0676754124",
+        email = "",
         rc = "16/00-1284560B24",
         nif = "002416012845690",
         nis = "002416012800145",
@@ -619,7 +615,7 @@ object PosSeeds {
     )
 
     val WHATSAPP_MANAGEMENT = "213676754124"
-    val WHATSAPP_DEPOT = "213674369056"
+    val WHATSAPP_DEPOT = "213676754124"
 }
 
 private val daSymbols = DecimalFormatSymbols(Locale.FRANCE).apply {

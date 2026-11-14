@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -74,7 +75,6 @@ import com.example.data.model.StoreInfo
 import com.example.data.model.TileProduct
 import com.example.data.model.formatDa
 import com.example.data.model.formatM2
-import com.example.data.model.toDzWhatsAppDigits
 import com.example.ui.components.ClearableOutlinedTextField
 import com.example.ui.components.DispoDepotRecipientsDialog
 import com.example.ui.components.NonImeNumericKeypad
@@ -235,9 +235,7 @@ fun StockScreen(
                                     appendLine("⚠️ *ÉTAT STOCK À RÉASSORTIR (${ruptures.size})*")
                                     ruptures.forEach { appendLine("• ${it.name} [${it.usine}] (${it.stock} ctn)") }
                                 }
-                                val targetWa = toDzWhatsAppDigits(
-                                    storeInfo.dispoWaRecipients.firstOrNull { it.phone.isNotBlank() }?.phone ?: storeInfo.tel
-                                ) ?: PosSeeds.WHATSAPP_MANAGEMENT
+                                val targetWa = PosSeeds.WHATSAPP_MANAGEMENT
                                 openWhatsApp(context, targetWa, msg)
                             }
                         ) {
@@ -343,27 +341,34 @@ fun StockScreen(
                 }
             }
         } else if (isGridView) {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 172.dp),
-                contentPadding = PaddingValues(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxSize().testTag("stock_catalog_grid")
-            ) {
-                items(filtered, key = { it.id }) { p ->
-                    StockGridProductCard(
-                        product = p,
-                        canModifyStock = canModifyStock,
-                        canViewPrixAchat = canViewPrixAchat,
-                        onPreviewImage = { previewProduct = p },
-                        onDirectEditStock = { directEditProduct = p },
-                        onAdjustStock = { delta -> onAdjustStock(p.id, delta) },
-                        onEditFiche = { ficheProduct = p },
-                        onRequestDispo = {
-                            onRequestDepotDispo(p)
-                            dispoTargetProduct = p
-                        }
-                    )
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val gridColumns = when {
+                    maxWidth >= 1000.dp -> 4
+                    maxWidth >= 600.dp -> 3
+                    else -> 2
+                }
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(gridColumns),
+                    contentPadding = PaddingValues(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxSize().testTag("stock_catalog_grid")
+                ) {
+                    items(filtered, key = { it.id }) { p ->
+                        StockGridProductCard(
+                            product = p,
+                            canModifyStock = canModifyStock,
+                            canViewPrixAchat = canViewPrixAchat,
+                            onPreviewImage = { previewProduct = p },
+                            onDirectEditStock = { directEditProduct = p },
+                            onAdjustStock = { delta -> onAdjustStock(p.id, delta) },
+                            onEditFiche = { ficheProduct = p },
+                            onRequestDispo = {
+                                onRequestDepotDispo(p)
+                                dispoTargetProduct = p
+                            }
+                        )
+                    }
                 }
             }
         } else {

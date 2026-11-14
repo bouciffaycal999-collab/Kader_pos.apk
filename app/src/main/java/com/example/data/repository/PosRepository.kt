@@ -67,6 +67,7 @@ class PosRepository(
         private const val KV_SETTINGS = "app_settings"
         private const val KV_CURRENT_USER_ID = "current_user_id"
         private const val KV_AUTO_EMAIL_PDF = "auto_email_pdf"
+        private const val KV_AUTO_WA_PHOTO = "auto_whatsapp_photo"
         private const val KV_PENDING_OFFLINE_SYNC = "pending_offline_sync"
     }
 
@@ -145,6 +146,10 @@ class PosRepository(
 
     val autoEmailPdfFlow: Flow<Boolean> =
         dao.observeKv(KV_AUTO_EMAIL_PDF).map { it?.jsonValue == "true" }
+            .flowOn(Dispatchers.Default).distinctUntilChanged()
+
+    val autoWhatsappPhotoFlow: Flow<Boolean> =
+        dao.observeKv(KV_AUTO_WA_PHOTO).map { it?.jsonValue != "false" }
             .flowOn(Dispatchers.Default).distinctUntilChanged()
 
     suspend fun ensureSeeded() = withContext(Dispatchers.IO) {
@@ -990,6 +995,10 @@ class PosRepository(
 
     suspend fun setAutoEmailPdf(enabled: Boolean) = withContext(Dispatchers.IO) {
         dao.putKv(AppKvEntity(KV_AUTO_EMAIL_PDF, if (enabled) "true" else "false"))
+    }
+
+    suspend fun setAutoWhatsappPhoto(enabled: Boolean) = withContext(Dispatchers.IO) {
+        dao.putKv(AppKvEntity(KV_AUTO_WA_PHOTO, if (enabled) "true" else "false"))
     }
 
     suspend fun hasPendingOfflineSync(): Boolean = withContext(Dispatchers.IO) {

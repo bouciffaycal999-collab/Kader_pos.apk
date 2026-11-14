@@ -56,6 +56,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -69,6 +70,15 @@ class CeramicaWorkflowTest {
 
     @get:Rule
     val composeTestRule = createComposeRule()
+
+    @Before
+    fun resetFileProviderCache() {
+        runCatching {
+            val field = androidx.core.content.FileProvider::class.java.getDeclaredField("sCache")
+            field.isAccessible = true
+            (field.get(null) as? MutableMap<*, *>)?.clear()
+        }
+    }
 
     @Test
     fun `default staff hierarchy has exact roles, no patron label, and strict prixAchat gating`() {
@@ -1061,5 +1071,72 @@ class CeramicaWorkflowTest {
         composeTestRule.waitForIdle()
         assertEquals(sampleProd.id, requestedDispoId)
         composeTestRule.onNodeWithTag("dispo_recipients_dialog").assertExists()
+    }
+
+    @Test
+    fun `invoice preview auto-dispatches PNG photo and PDF file to 0676754124 without text and unlocks printing`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val invoice = sampleInvoice(whatsappSent = false, hidePrices = false)
+        var markedInvoiceId: String? = null
+        InvoicePdfGenerator.pdfFileFactoryOverride = { ctx, inv, _, _, _, _ ->
+            val dir = java.io.File(ctx.filesDir, "invoices_pdf").apply { mkdirs() }
+            java.io.File(dir, "Facture_${inv.reference}.pdf").apply {
+                writeText("%PDF-1.4\n%CERAMICA_AUTO_TEST\n")
+            }
+        }
+
+        try {
+            composeTestRule.setContent {
+                KaderPosTheme {
+                    InvoicePreviewPrintSheet(
+                        invoice = invoice,
+                        storeInfo = PosSeeds.DEFAULT_STORE_INFO,
+                        settings = AppSettings(),
+                        autoEmailPdf = false,
+                        autoWhatsappPhoto = true,
+                        onMarkWhatsappSent = { markedInvoiceId = it },
+                        onUpdateSettings = {},
+                        onDismiss = {}
+                    )
+                }
+            }
+
+            composeTestRule.waitUntil(timeoutMillis = 5000) {
+                Shadows.shadowOf(context as Application).peekNextStartedActivity() != null
+            }
+
+            val launchedIntent = Shadows.shadowOf(context as Application).nextStartedActivity
+            assertTrue("Expected auto WhatsApp share intent", launchedIntent != null)
+            val actualIntent: Intent = if (launchedIntent.action == Intent.ACTION_CHOOSER) {
+                if (Build.VERSION.SDK_INT >= 33) {
+                    launchedIntent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)!!
+                } else {
+                    @Suppress("DEPRECATION")
+                    launchedIntent.getParcelableExtra(Intent.EXTRA_INTENT)!!
+                }
+            } else {
+                launchedIntent
+            }
+
+            assertEquals(Intent.ACTION_SEND_MULTIPLE, actualIntent.action)
+            assertEquals("213676754124@s.whatsapp.net", actualIntent.getStringExtra("jid"))
+            assertFalse("Expected NO text caption on invoice PNG+PDF dispatch", actualIntent.hasExtra(Intent.EXTRA_TEXT))
+            val streams: ArrayList<Uri>? = if (Build.VERSION.SDK_INT >= 33) {
+                actualIntent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                actualIntent.getParcelableArrayListExtra(Intent.EXTRA_STREAM)
+            }
+            assertEquals(2, streams?.size)
+            assertTrue(streams!!.any { it.toString().endsWith(".png") })
+            assertTrue(streams.any { it.toString().endsWith(".pdf") })
+            assertEquals(invoice.id, markedInvoiceId)
+            composeTestRule.waitForIdle()
+            composeTestRule.onNodeWithTag("invoice_print_pdf_btn").assertIsEnabled()
+            composeTestRule.onNodeWithTag("invoice_open_pdf_btn").assertIsEnabled()
+            composeTestRule.onNodeWithTag("invoice_gmail_pdf_btn").assertDoesNotExist()
+        } finally {
+            InvoicePdfGenerator.pdfFileFactoryOverride = null
+        }
     }
 }

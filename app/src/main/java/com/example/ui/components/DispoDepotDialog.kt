@@ -25,7 +25,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,10 +38,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.data.model.PosSeeds
 import com.example.data.model.TileProduct
 import com.example.data.model.WaRecipient
 import com.example.data.model.formatM2
-import com.example.data.model.toDzWhatsAppDigits
 import com.example.ui.theme.Cyan300
 import com.example.ui.theme.Cyan400
 import com.example.ui.theme.Cyan500
@@ -195,80 +194,61 @@ fun DispoDepotRecipientsDialog(
                 }
 
                 Text(
-                    text = "Alerte Direction enregistrée. Choisir un responsable pour envoyer sur WhatsApp :",
+                    text = "Alerte Direction enregistrée. Envoyer la demande sur WhatsApp (0676754124 uniquement) :",
                     style = MaterialTheme.typography.labelLarge,
                     color = Slate400,
                     fontWeight = FontWeight.Bold
                 )
 
-                recipients.forEach { rec ->
-                    val waDigits = toDzWhatsAppDigits(rec.phone)
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = Slate950,
-                        border = BorderStroke(1.dp, Slate800)
+                val soleRecipient = WaRecipient(name = "Bureau / Kader (0676754124)", phone = "0676754124")
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Slate950,
+                    border = BorderStroke(1.dp, Slate800)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = soleRecipient.name,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = Slate100,
+                                fontWeight = FontWeight.Black
+                            )
+                            Text(
+                                text = soleRecipient.phone,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Cyan400,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                dispatchWhatsAppText(context, PosSeeds.WHATSAPP_MANAGEMENT, message)
+                                onDismiss()
+                            },
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                                .height(48.dp)
+                                .testTag("dispo_wa_recipient_${soleRecipient.name}"),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Emerald500,
+                                contentColor = OnDark
+                            )
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = rec.name,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = Slate100,
-                                    fontWeight = FontWeight.Black
-                                )
-                                Text(
-                                    text = rec.phone.ifBlank { "Numéro à configurer dans Réglages" },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (waDigits != null) Cyan400 else Rose400,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            Button(
-                                onClick = {
-                                    dispatchWhatsAppText(context, waDigits, message)
-                                    onDismiss()
-                                },
-                                modifier = Modifier
-                                    .height(44.dp)
-                                    .testTag("dispo_wa_recipient_${rec.name}"),
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (waDigits != null) Emerald500 else Cyan500,
-                                    contentColor = OnDark
-                                )
-                            ) {
-                                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = if (waDigits != null) "WhatsApp" else "Choisir WA",
-                                    fontWeight = FontWeight.Black
-                                )
-                            }
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "WhatsApp",
+                                fontWeight = FontWeight.Black
+                            )
                         }
                     }
-                }
-
-                OutlinedButton(
-                    onClick = {
-                        dispatchWhatsAppText(context, null, message)
-                        onDismiss()
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("dispo_wa_other_btn"),
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.5.dp, Cyan500)
-                ) {
-                    Icon(Icons.Default.Share, contentDescription = null, tint = Cyan400, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Autre Contact WhatsApp", color = Cyan400, fontWeight = FontWeight.Black)
                 }
             }
         }

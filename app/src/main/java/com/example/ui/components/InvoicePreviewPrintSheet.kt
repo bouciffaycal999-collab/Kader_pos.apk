@@ -29,7 +29,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Print
@@ -100,6 +99,7 @@ fun InvoicePreviewPrintSheet(
     storeInfo: StoreInfo,
     settings: AppSettings,
     autoEmailPdf: Boolean = false,
+    autoWhatsappPhoto: Boolean = false,
     canHideInvoicePrices: Boolean = false,
     onToggleHidePrices: (invoiceId: String, hide: Boolean) -> Unit = { _, _ -> },
     onMarkWhatsappSent: (invoiceId: String) -> Unit = {},
@@ -117,7 +117,7 @@ fun InvoicePreviewPrintSheet(
 
     var savedPdfFile by remember { mutableStateOf<File?>(null) }
     var savedPngFile by remember { mutableStateOf<File?>(null) }
-    var autoEmailLaunchedForId by remember { mutableStateOf<String?>(null) }
+    var autoWaLaunchedForId by remember { mutableStateOf<String?>(null) }
 
     val logoBitmap = remember(context) {
         val f = InvoicePdfGenerator.getStoreLogoFile(context)
@@ -127,6 +127,8 @@ fun InvoicePreviewPrintSheet(
     val effectiveInvoice = remember(invoice, hidePrices, whatsappSent) {
         invoice.copy(hidePrices = hidePrices, whatsappSentBeforePrint = whatsappSent)
     }
+
+    val soleWaTarget = PosSeeds.WHATSAPP_MANAGEMENT
 
     LaunchedEffect(invoice.id, format, hideBain, hidePrices) {
         val (pdf, png) = withContext(Dispatchers.IO) {
@@ -153,18 +155,33 @@ fun InvoicePreviewPrintSheet(
         }
         savedPdfFile = pdf
         savedPngFile = png
-        if (autoEmailPdf && pdf != null && autoEmailLaunchedForId != invoice.id) {
-            autoEmailLaunchedForId = invoice.id
-            InvoicePdfGenerator.sharePdfViaGmail(context, pdf, effectiveInvoice, storeInfo)
+        if (autoWhatsappPhoto && !whatsappSent && png != null && autoWaLaunchedForId != invoice.id) {
+            autoWaLaunchedForId = invoice.id
+            val launched = if (pdf != null) {
+                InvoicePdfGenerator.shareInvoicePhotoAndPdfViaWhatsApp(
+                    context = context,
+                    pngFile = png,
+                    pdfFile = pdf,
+                    phone213 = soleWaTarget,
+                    message = "",
+                    invoiceRef = effectiveInvoice.reference
+                )
+            } else {
+                InvoicePdfGenerator.shareInvoicePhotoViaWhatsApp(
+                    context = context,
+                    pngFile = png,
+                    phone213 = soleWaTarget,
+                    message = ""
+                )
+            }
+            if (launched) {
+                whatsappSent = true
+                onMarkWhatsappSent(invoice.id)
+            }
         }
     }
 
-    val waRecipients: List<WaRecipient> = remember(storeInfo.invoiceWaRecipients) {
-        storeInfo.invoiceWaRecipients.ifEmpty { PosSeeds.DEFAULT_INVOICE_WA_RECIPIENTS }
-    }
-    val depotWa = toDzWhatsAppDigits(storeInfo.tel2) ?: PosSeeds.WHATSAPP_DEPOT
-
-    fun dispatchInvoicePhotoAndPdfWhatsApp(phoneRaw: String?) {
+    fun dispatchInvoicePhotoAndPdfWhatsApp() {
         val png = savedPngFile ?: InvoicePdfGenerator.generateAndSaveInvoicePhotoPng(
             context = context,
             invoice = effectiveInvoice,
@@ -180,13 +197,12 @@ fun InvoicePreviewPrintSheet(
             hideBain = hideBain,
             hidePrices = hidePrices
         ).also { savedPdfFile = it }
-        val caption = buildWhatsAppManagementMessage(effectiveInvoice)
         InvoicePdfGenerator.shareInvoicePhotoAndPdfViaWhatsApp(
             context = context,
             pngFile = png,
             pdfFile = pdf,
-            phone213 = phoneRaw?.let { toDzWhatsAppDigits(it) },
-            message = caption,
+            phone213 = soleWaTarget,
+            message = "",
             invoiceRef = effectiveInvoice.reference
         )
         if (!whatsappSent) {
@@ -288,45 +304,25 @@ fun InvoicePreviewPrintSheet(
                         )
                     }
 
-                    Row(
+                    Button(
+                        onClick = { dispatchInvoicePhotoAndPdfWhatsApp() },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            .height(48.dp)
+                            .testTag("invoice_wa_bureau_photo_btn"),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Emerald500,
+                            contentColor = OnDark
+                        )
                     ) {
-                        waRecipients.forEach { recipient ->
-                            Button(
-                                onClick = { dispatchInvoicePhotoAndPdfWhatsApp(recipient.phone) },
-                                modifier = Modifier
-                                    .height(44.dp)
-                                    .testTag("invoice_wa_photo_btn_${recipient.name}"),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Emerald500,
-                                    contentColor = OnDark
-                                )
-                            ) {
-                                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "Photo + PDF → ${recipient.name}",
-                                    fontWeight = FontWeight.Black,
-                                    style = MaterialTheme.typography.labelMedium
-                                )
-                            }
-                        }
-                        OutlinedButton(
-                            onClick = { dispatchInvoicePhotoAndPdfWhatsApp(null) },
-                            modifier = Modifier
-                                .height(44.dp)
-                                .testTag("invoice_wa_photo_other_btn"),
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.5.dp, Emerald500)
-                        ) {
-                            Icon(Icons.Default.Share, contentDescription = null, tint = Emerald400, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Autre WA (Photo+PDF)", color = Emerald400, fontWeight = FontWeight.Bold)
-                        }
+                        Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Photo + PDF → WhatsApp 0676754124",
+                            fontWeight = FontWeight.Black,
+                            style = MaterialTheme.typography.labelLarge
+                        )
                     }
                 }
             }
@@ -496,108 +492,33 @@ fun InvoicePreviewPrintSheet(
                 )
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            Button(
+                onClick = {
+                    val file = savedPdfFile ?: InvoicePdfGenerator.generateAndSavePdf(
+                        context, effectiveInvoice, storeInfo, format, hideBain, hidePrices
+                    ).also { savedPdfFile = it }
+                    InvoicePdfGenerator.openPdfViewer(context, file)
+                },
+                enabled = whatsappSent,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp)
+                    .testTag("invoice_open_pdf_btn"),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Cyan500,
+                    contentColor = OnDark,
+                    disabledContainerColor = Slate700,
+                    disabledContentColor = Slate400
+                )
             ) {
-                Button(
-                    onClick = {
-                        val file = savedPdfFile ?: InvoicePdfGenerator.generateAndSavePdf(
-                            context, effectiveInvoice, storeInfo, format, hideBain, hidePrices
-                        ).also { savedPdfFile = it }
-                        InvoicePdfGenerator.openPdfViewer(context, file)
-                    },
-                    enabled = whatsappSent,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(50.dp)
-                        .testTag("invoice_open_pdf_btn"),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Cyan500,
-                        contentColor = OnDark,
-                        disabledContainerColor = Slate700,
-                        disabledContentColor = Slate400
-                    )
-                ) {
-                    Icon(
-                        imageVector = if (whatsappSent) Icons.Default.PictureAsPdf else Icons.Default.Lock,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Ouvrir PDF", fontWeight = FontWeight.Black)
-                }
-
-                Button(
-                    onClick = {
-                        val file = savedPdfFile ?: InvoicePdfGenerator.generateAndSavePdf(
-                            context, effectiveInvoice, storeInfo, format, hideBain, hidePrices
-                        ).also { savedPdfFile = it }
-                        InvoicePdfGenerator.sharePdfViaGmail(context, file, effectiveInvoice, storeInfo)
-                    },
-                    modifier = Modifier
-                        .weight(1.25f)
-                        .height(50.dp)
-                        .testTag("invoice_gmail_pdf_btn"),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Navy950, contentColor = OnDark)
-                ) {
-                    Icon(Icons.Default.Email, contentDescription = null, tint = Amber500, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Gmail Bureau", fontWeight = FontWeight.Black)
-                }
-            }
-
-            // Secondary WhatsApp Photo + PDF Row (Dépôt & Client)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = {
-                        val msg = buildWhatsAppDepotMessage(effectiveInvoice)
-                        val png = savedPngFile ?: InvoicePdfGenerator.generateAndSaveInvoicePhotoPng(
-                            context, effectiveInvoice, storeInfo, hideBain, hidePrices
-                        ).also { savedPngFile = it }
-                        val pdf = savedPdfFile ?: InvoicePdfGenerator.generateAndSavePdf(
-                            context, effectiveInvoice, storeInfo, format, hideBain, hidePrices
-                        ).also { savedPdfFile = it }
-                        InvoicePdfGenerator.shareInvoicePhotoAndPdfViaWhatsApp(
-                            context, png, pdf, depotWa, msg, effectiveInvoice.reference
-                        )
-                    },
-                    modifier = Modifier.weight(1f).height(48.dp),
-                    border = BorderStroke(1.5.dp, Cyan500),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Default.Share, contentDescription = null, tint = Cyan400, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("WA Dépôt", color = Cyan400, fontWeight = FontWeight.Bold)
-                }
-
-                OutlinedButton(
-                    onClick = {
-                        val msg = buildWhatsAppClientMessage(effectiveInvoice, storeInfo)
-                        val phone = toDzWhatsAppDigits(invoice.client.tel)
-                        val png = savedPngFile ?: InvoicePdfGenerator.generateAndSaveInvoicePhotoPng(
-                            context, effectiveInvoice, storeInfo, hideBain, hidePrices
-                        ).also { savedPngFile = it }
-                        val pdf = savedPdfFile ?: InvoicePdfGenerator.generateAndSavePdf(
-                            context, effectiveInvoice, storeInfo, format, hideBain, hidePrices
-                        ).also { savedPdfFile = it }
-                        InvoicePdfGenerator.shareInvoicePhotoAndPdfViaWhatsApp(
-                            context, png, pdf, phone, msg, effectiveInvoice.reference
-                        )
-                    },
-                    modifier = Modifier.weight(1f).height(48.dp),
-                    border = BorderStroke(1.5.dp, Emerald500),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Default.Share, contentDescription = null, tint = Emerald400, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("WA Client", color = Emerald400, fontWeight = FontWeight.Bold)
-                }
+                Icon(
+                    imageVector = if (whatsappSent) Icons.Default.PictureAsPdf else Icons.Default.Lock,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Ouvrir PDF ($format)", fontWeight = FontWeight.Black)
             }
         }
     }

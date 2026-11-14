@@ -68,6 +68,9 @@ object InvoicePdfGenerator {
         return if (file.exists()) file.delete() else false
     }
 
+    @androidx.annotation.VisibleForTesting
+    internal var pdfFileFactoryOverride: ((Context, Invoice, StoreInfo, String, Boolean, Boolean) -> File)? = null
+
     fun generateAndSavePdf(
         context: Context,
         invoice: Invoice,
@@ -76,6 +79,9 @@ object InvoicePdfGenerator {
         hideBain: Boolean = true,
         hidePrices: Boolean = invoice.hidePrices
     ): File {
+        pdfFileFactoryOverride?.let { overrideFn ->
+            return overrideFn(context, invoice, storeInfo, format, hideBain, hidePrices)
+        }
         val dir = File(context.filesDir, PDF_DIR_NAME).apply { mkdirs() }
         val safeRef = invoice.reference.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").ifBlank { invoice.id }
         val suffix = if (hidePrices) "_REV" else ""
@@ -88,66 +94,69 @@ object InvoicePdfGenerator {
         val logoBitmap = loadStoreLogoBitmap(context)
 
         val doc = PdfDocument()
-        var pageNum = 1
-        var page = doc.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNum).create())
-        var canvas = page.canvas
+        try {
+            var pageNum = 1
+            var page = doc.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNum).create())
+            var canvas = page.canvas
 
-        val scale = if (isA5) 0.78f else 1f
-        val footerReserve = 165f * scale
+            val scale = if (isA5) 0.78f else 1f
+            val footerReserve = 165f * scale
 
-        var y = drawEcoInvoiceHeader(
-            canvas = canvas,
-            pageWidth = pageWidth.toFloat(),
-            margin = margin,
-            scale = scale,
-            invoice = invoice,
-            storeInfo = storeInfo,
-            logoBitmap = logoBitmap,
-            hidePrices = hidePrices
-        )
-        y = drawEcoTableHeader(canvas, pageWidth.toFloat(), margin, y, scale, hidePrices)
+            var y = drawEcoInvoiceHeader(
+                canvas = canvas,
+                pageWidth = pageWidth.toFloat(),
+                margin = margin,
+                scale = scale,
+                invoice = invoice,
+                storeInfo = storeInfo,
+                logoBitmap = logoBitmap,
+                hidePrices = hidePrices
+            )
+            y = drawEcoTableHeader(canvas, pageWidth.toFloat(), margin, y, scale, hidePrices)
 
-        fun ensureSpace(needed: Float) {
-            if (y + needed > pageHeight - margin - footerReserve) {
-                doc.finishPage(page)
-                pageNum++
-                page = doc.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNum).create())
-                canvas = page.canvas
-                canvas.drawColor(Color.WHITE)
-                y = drawEcoTableHeader(canvas, pageWidth.toFloat(), margin, margin, scale, hidePrices)
+            fun ensureSpace(needed: Float) {
+                if (y + needed > pageHeight - margin - footerReserve) {
+                    doc.finishPage(page)
+                    pageNum++
+                    page = doc.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNum).create())
+                    canvas = page.canvas
+                    canvas.drawColor(Color.WHITE)
+                    y = drawEcoTableHeader(canvas, pageWidth.toFloat(), margin, margin, scale, hidePrices)
+                }
             }
-        }
 
-        invoice.articles.forEach { item ->
-            val rowH = 34f * scale
-            ensureSpace(rowH + 4f)
-            y = drawEcoProductRow(canvas, pageWidth.toFloat(), margin, y, scale, item, hideBain, hidePrices)
-        }
+            invoice.articles.forEach { item ->
+                val rowH = 34f * scale
+                ensureSpace(rowH + 4f)
+                y = drawEcoProductRow(canvas, pageWidth.toFloat(), margin, y, scale, item, hideBain, hidePrices)
+            }
 
-        invoice.lignesLibres.forEach { line ->
-            val rowH = 24f * scale
-            ensureSpace(rowH + 4f)
-            y = drawEcoFreeLineRow(canvas, pageWidth.toFloat(), margin, y, scale, line.designation, "${formatM2(line.quantite)} ${line.unite}", line.prixUnitaire, line.sousTotal, hidePrices)
-        }
+            invoice.lignesLibres.forEach { line ->
+                val rowH = 24f * scale
+                ensureSpace(rowH + 4f)
+                y = drawEcoFreeLineRow(canvas, pageWidth.toFloat(), margin, y, scale, line.designation, "${formatM2(line.quantite)} ${line.unite}", line.prixUnitaire, line.sousTotal, hidePrices)
+            }
 
-        ensureSpace(footerReserve)
-        drawEcoInvoiceFooter(
-            canvas = canvas,
-            pageWidth = pageWidth.toFloat(),
-            margin = margin,
-            yStart = y + (8f * scale),
-            scale = scale,
-            invoice = invoice,
-            storeInfo = storeInfo,
-            hidePrices = hidePrices
-        )
+            ensureSpace(footerReserve)
+            drawEcoInvoiceFooter(
+                canvas = canvas,
+                pageWidth = pageWidth.toFloat(),
+                margin = margin,
+                yStart = y + (8f * scale),
+                scale = scale,
+                invoice = invoice,
+                storeInfo = storeInfo,
+                hidePrices = hidePrices
+            )
 
-        doc.finishPage(page)
-        FileOutputStream(targetFile).use { out ->
-            doc.writeTo(out)
+            doc.finishPage(page)
+            FileOutputStream(targetFile).use { out ->
+                doc.writeTo(out)
+            }
+        } finally {
+            runCatching { doc.close() }
+            runCatching { logoBitmap?.recycle() }
         }
-        doc.close()
-        logoBitmap?.recycle()
         return targetFile
     }
 
@@ -716,9 +725,9 @@ object InvoicePdfGenerator {
         pngFile: File,
         pdfFile: File,
         phone213: String?,
-        message: String,
+        message: String = "",
         invoiceRef: String = ""
-    ) {
+    ): Boolean {
         val pngUri = getFileUri(context, pngFile)
         val pdfUri = getFileUri(context, pdfFile)
         val streamUris = arrayListOf(pngUri, pdfUri)
@@ -729,7 +738,9 @@ object InvoicePdfGenerator {
             type = "*/*"
             putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/png", "application/pdf"))
             putParcelableArrayListExtra(Intent.EXTRA_STREAM, streamUris)
-            putExtra(Intent.EXTRA_TEXT, message)
+            if (message.isNotBlank()) {
+                putExtra(Intent.EXTRA_TEXT, message)
+            }
             if (invoiceRef.isNotBlank()) {
                 putExtra(Intent.EXTRA_SUBJECT, "Facture #$invoiceRef")
             }
@@ -742,21 +753,18 @@ object InvoicePdfGenerator {
         }
         val waStandard = Intent(multiIntent).apply { setPackage("com.whatsapp") }
         val waBusiness = Intent(multiIntent).apply { setPackage("com.whatsapp.w4b") }
-        when {
+        return when {
             waStandard.resolveActivity(context.packageManager) != null -> {
-                runCatching { context.startActivity(waStandard) }
+                runCatching { context.startActivity(waStandard) }.isSuccess
             }
             waBusiness.resolveActivity(context.packageManager) != null -> {
-                runCatching { context.startActivity(waBusiness) }
+                runCatching { context.startActivity(waBusiness) }.isSuccess
             }
             else -> {
-                runCatching {
-                    context.startActivity(
-                        Intent.createChooser(multiIntent, "Envoyer Photo + PDF Facture").apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                    )
+                val chooser = Intent.createChooser(multiIntent, "Envoyer Photo + PDF Facture").apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
+                runCatching { context.startActivity(chooser) }.isSuccess
             }
         }
     }
@@ -766,35 +774,35 @@ object InvoicePdfGenerator {
         pngFile: File,
         phone213: String?,
         message: String
-    ) {
+    ): Boolean {
         val uri = getFileUri(context, pngFile)
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
             type = "image/png"
             putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_TEXT, message)
+            if (message.isNotBlank()) {
+                putExtra(Intent.EXTRA_TEXT, message)
+            }
             if (!phone213.isNullOrBlank()) {
                 putExtra("jid", "$phone213@s.whatsapp.net")
             }
+            clipData = android.content.ClipData.newRawUri("Facture", uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         val waStandard = Intent(sendIntent).apply { setPackage("com.whatsapp") }
         val waBusiness = Intent(sendIntent).apply { setPackage("com.whatsapp.w4b") }
-        when {
+        return when {
             waStandard.resolveActivity(context.packageManager) != null -> {
-                runCatching { context.startActivity(waStandard) }
+                runCatching { context.startActivity(waStandard) }.isSuccess
             }
             waBusiness.resolveActivity(context.packageManager) != null -> {
-                runCatching { context.startActivity(waBusiness) }
+                runCatching { context.startActivity(waBusiness) }.isSuccess
             }
             else -> {
-                runCatching {
-                    context.startActivity(
-                        Intent.createChooser(sendIntent, "Envoyer Photo Facture").apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                    )
+                val chooser = Intent.createChooser(sendIntent, "Envoyer Photo Facture").apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
+                runCatching { context.startActivity(chooser) }.isSuccess
             }
         }
     }
@@ -813,7 +821,9 @@ object InvoicePdfGenerator {
             if (!phone213.isNullOrBlank()) {
                 putExtra("jid", "$phone213@s.whatsapp.net")
             }
+            clipData = android.content.ClipData.newRawUri("Facture PDF", uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         val waStandard = Intent(sendIntent).apply { setPackage("com.whatsapp") }
         val waBusiness = Intent(sendIntent).apply { setPackage("com.whatsapp.w4b") }

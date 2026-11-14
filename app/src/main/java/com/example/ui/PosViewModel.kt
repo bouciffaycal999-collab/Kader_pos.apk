@@ -95,6 +95,7 @@ data class PosUiState(
     val pendingCloudWrites: Int = 0,
     val cloudSyncError: String? = null,
     val autoEmailPdf: Boolean = false,
+    val autoWhatsappPhoto: Boolean = true,
     val depotWatchEnabled: Boolean = true
 ) {
     val effectivePermissions: EffectivePermissions
@@ -518,14 +519,21 @@ class PosViewModel(
         OpsBundle(caisse, dailyCounts, users, notifications, currentUserId)
     }
 
+    private val autoDispatchFlagsFlow = combine(
+        repository.autoEmailPdfFlow,
+        repository.autoWhatsappPhotoFlow
+    ) { autoEmailPdf, autoWhatsappPhoto ->
+        autoEmailPdf to autoWhatsappPhoto
+    }
+
     private val sessionDataFlow = combine(
         repository.cartFlow,
         repository.freeLinesFlow,
         repository.storeInfoFlow,
         repository.settingsFlow,
-        repository.autoEmailPdfFlow
-    ) { cart, freeLines, storeInfo, settings, autoEmailPdf ->
-        SessionBundle(cart, freeLines, storeInfo, settings, autoEmailPdf)
+        autoDispatchFlagsFlow
+    ) { cart, freeLines, storeInfo, settings, (autoEmailPdf, autoWhatsappPhoto) ->
+        SessionBundle(cart, freeLines, storeInfo, settings, autoEmailPdf, autoWhatsappPhoto)
     }
 
     private val statusAndNavFlow = combine(
@@ -595,6 +603,7 @@ class PosViewModel(
             pendingCloudWrites = nav.pendingCloudWrites,
             cloudSyncError = nav.cloudSyncError,
             autoEmailPdf = session.autoEmailPdf,
+            autoWhatsappPhoto = session.autoWhatsappPhoto,
             depotWatchEnabled = nav.depotWatchEnabled
         )
     }
@@ -1512,6 +1521,15 @@ class PosViewModel(
         }
     }
 
+    fun setAutoWhatsappPhoto(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.setAutoWhatsappPhoto(enabled)
+            showMessage(
+                if (enabled) "Envoi Photo WhatsApp Bureau auto activé" else "Envoi Photo WhatsApp Bureau auto désactivé"
+            )
+        }
+    }
+
     fun resetCatalog() {
         if (!uiState.value.effectivePermissions.canModifyStock) {
             showMessage("Réinitialisation du stock refusée")
@@ -1580,7 +1598,8 @@ class PosViewModel(
         val freeLines: List<FreeLineItem>,
         val storeInfo: StoreInfo,
         val settings: AppSettings,
-        val autoEmailPdf: Boolean
+        val autoEmailPdf: Boolean,
+        val autoWhatsappPhoto: Boolean
     )
 
     private companion object {
